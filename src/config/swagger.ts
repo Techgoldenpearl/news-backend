@@ -1,0 +1,101 @@
+export const swaggerDocument = {
+  openapi: "3.0.3",
+  info: {
+    title: "News Platform API",
+    version: "1.0.0",
+    description: "REST API for the News Platform — serves admin panel and 8+ public news sites",
+    contact: { email: "admin@news.com" },
+  },
+  servers: [
+    { url: "http://localhost:5000", description: "Development" },
+  ],
+  tags: [
+    { name: "Auth", description: "User authentication" },
+    { name: "Articles", description: "Article management" },
+    { name: "Categories", description: "Category management" },
+    { name: "Sites", description: "Multi-site management" },
+    { name: "Media", description: "Media upload & management" },
+    { name: "Ads", description: "Ad management & analytics" },
+    { name: "Reporters", description: "Reporter (Patrakar) system" },
+    { name: "Membership", description: "Plans & subscriptions" },
+    { name: "Features", description: "Rashifal, web stories, galleries, live blogs, search" },
+    { name: "Admin", description: "Admin dashboard, users, comments, audit" },
+    { name: "SEO", description: "Sitemap, robots, structured data" },
+    { name: "Feed", description: "RSS feeds" },
+  ],
+  components: {
+    securitySchemes: {
+      bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+      cookieAuth: { type: "apiKey", in: "cookie", name: "token" },
+    },
+    schemas: {
+      Error: { type: "object", properties: { error: { type: "string" } } },
+      Success: { type: "object", properties: { success: { type: "boolean" } } },
+      User: {
+        type: "object", properties: {
+          id: { type: "integer" }, name: { type: "string" }, email: { type: "string" },
+          role: { type: "string", enum: ["user", "editor", "admin", "super_admin"] },
+          avatarUrl: { type: "string", nullable: true },
+        },
+      },
+      Article: {
+        type: "object", properties: {
+          id: { type: "integer" }, title: { type: "string" }, slug: { type: "string" },
+          summary: { type: "string" }, content: { type: "string" },
+          status: { type: "string", enum: ["draft", "published", "scheduled", "archived"] },
+          categoryId: { type: "integer" }, thumbnailUrl: { type: "string" },
+          isBreaking: { type: "boolean" }, isTrending: { type: "boolean" },
+          isFeatured: { type: "boolean" }, isPremium: { type: "boolean" },
+          viewsCount: { type: "integer" }, publishedAt: { type: "string", format: "date-time" },
+        },
+      },
+      Category: {
+        type: "object", properties: {
+          id: { type: "integer" }, name: { type: "string" }, nameHindi: { type: "string" },
+          slug: { type: "string" }, color: { type: "string" }, sortOrder: { type: "integer" },
+        },
+      },
+      Site: {
+        type: "object", properties: {
+          id: { type: "integer" }, name: { type: "string" }, slug: { type: "string" },
+          domain: { type: "string" }, language: { type: "string" }, region: { type: "string" },
+          theme: { type: "object" }, isActive: { type: "boolean" },
+        },
+      },
+      Plan: {
+        type: "object", properties: {
+          id: { type: "integer" }, name: { type: "string" }, price: { type: "string" },
+          interval: { type: "string" }, durationDays: { type: "integer" },
+          features: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+  },
+  paths: {
+    "/api/health": { get: { tags: ["Admin"], summary: "Health check", responses: { "200": { description: "OK" } } } },
+    "/api/health/deep": { get: { tags: ["Admin"], summary: "Deep health check (DB, Redis, S3)", responses: { "200": { description: "Service status" } } } },
+    "/api/auth/register": { post: { tags: ["Auth"], summary: "Register new user", requestBody: { content: { "application/json": { schema: { type: "object", required: ["email", "password"], properties: { name: { type: "string" }, email: { type: "string" }, password: { type: "string" }, phone: { type: "string" } } } } } }, responses: { "201": { description: "User created" }, "400": { description: "Validation error" }, "409": { description: "Email exists" } } } },
+    "/api/auth/login": { post: { tags: ["Auth"], summary: "Login", requestBody: { content: { "application/json": { schema: { type: "object", required: ["email", "password"], properties: { email: { type: "string" }, password: { type: "string" } } } } } }, responses: { "200": { description: "Login success with JWT token" }, "401": { description: "Invalid credentials" } } } },
+    "/api/auth/me": { get: { tags: ["Auth"], summary: "Get current user", security: [{ bearerAuth: [] }], responses: { "200": { description: "User data" }, "401": { description: "Not authenticated" } } } },
+    "/api/auth/logout": { post: { tags: ["Auth"], summary: "Logout", responses: { "200": { description: "OK" } } } },
+    "/api/auth/forgot-password": { post: { tags: ["Auth"], summary: "Request password reset", requestBody: { content: { "application/json": { schema: { type: "object", properties: { email: { type: "string" } } } } } }, responses: { "200": { description: "Reset link sent" } } } },
+    "/api/auth/reset-password": { post: { tags: ["Auth"], summary: "Reset password with token", requestBody: { content: { "application/json": { schema: { type: "object", properties: { token: { type: "string" }, newPassword: { type: "string" } } } } } }, responses: { "200": { description: "Password reset" } } } },
+    "/api/auth/google": { post: { tags: ["Auth"], summary: "Google OAuth login", requestBody: { content: { "application/json": { schema: { type: "object", properties: { idToken: { type: "string" } } } } } }, responses: { "200": { description: "Login success" } } } },
+    "/api/articles": { get: { tags: ["Articles"], summary: "List published articles", parameters: [{ name: "limit", in: "query", schema: { type: "integer" } }, { name: "page", in: "query", schema: { type: "integer" } }, { name: "categorySlug", in: "query", schema: { type: "string" } }, { name: "isBreaking", in: "query", schema: { type: "string" } }, { name: "isTrending", in: "query", schema: { type: "string" } }, { name: "search", in: "query", schema: { type: "string" } }], responses: { "200": { description: "Paginated articles" } } }, post: { tags: ["Articles"], summary: "Create article (editor+)", security: [{ bearerAuth: [] }], requestBody: { content: { "application/json": { schema: { "$ref": "#/components/schemas/Article" } } } }, responses: { "201": { description: "Created" }, "401": { description: "Unauthorized" } } } },
+    "/api/articles/{slug}": { get: { tags: ["Articles"], summary: "Get article by slug", parameters: [{ name: "slug", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "Article detail" }, "404": { description: "Not found" } } } },
+    "/api/articles/{id}": { put: { tags: ["Articles"], summary: "Update article", security: [{ bearerAuth: [] }], parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }], responses: { "200": { description: "Updated" } } }, delete: { tags: ["Articles"], summary: "Delete article", security: [{ bearerAuth: [] }], parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }], responses: { "200": { description: "Deleted" } } } },
+    "/api/categories": { get: { tags: ["Categories"], summary: "List categories", responses: { "200": { description: "Category list" } } }, post: { tags: ["Categories"], summary: "Create category (editor+)", security: [{ bearerAuth: [] }], responses: { "201": { description: "Created" } } } },
+    "/api/sites": { get: { tags: ["Sites"], summary: "List all sites", responses: { "200": { description: "Site list" } } }, post: { tags: ["Sites"], summary: "Create site (admin)", security: [{ bearerAuth: [] }], responses: { "201": { description: "Created" } } } },
+    "/api/media/upload": { post: { tags: ["Media"], summary: "Upload image (base64, auto-optimized to WebP)", security: [{ bearerAuth: [] }], requestBody: { content: { "application/json": { schema: { type: "object", required: ["base64", "mimeType"], properties: { base64: { type: "string" }, fileName: { type: "string" }, mimeType: { type: "string", enum: ["image/jpeg", "image/png", "image/webp", "image/gif"] } } } } } }, responses: { "201": { description: "Uploaded" } } } },
+    "/api/membership/plans": { get: { tags: ["Membership"], summary: "List active plans", responses: { "200": { description: "Plan list" } } } },
+    "/api/membership/subscribe": { post: { tags: ["Membership"], summary: "Subscribe to plan", security: [{ bearerAuth: [] }], responses: { "201": { description: "Subscribed" } } } },
+    "/api/ads/zone/{zone}": { get: { tags: ["Ads"], summary: "Get active ad for zone", parameters: [{ name: "zone", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "Ad data" } } } },
+    "/api/features/search": { get: { tags: ["Features"], summary: "Full-text search articles", parameters: [{ name: "q", in: "query", required: true, schema: { type: "string" } }], responses: { "200": { description: "Search results" } } } },
+    "/api/features/rashifal/{rashi}": { get: { tags: ["Features"], summary: "Get rashifal for zodiac sign", parameters: [{ name: "rashi", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "Rashifal data" } } } },
+    "/api/admin/stats": { get: { tags: ["Admin"], summary: "Dashboard statistics", security: [{ bearerAuth: [] }], responses: { "200": { description: "Stats" } } } },
+    "/sitemap.xml": { get: { tags: ["SEO"], summary: "XML Sitemap", responses: { "200": { description: "Sitemap XML" } } } },
+    "/robots.txt": { get: { tags: ["SEO"], summary: "Robots.txt", responses: { "200": { description: "Robots file" } } } },
+    "/feed/rss": { get: { tags: ["Feed"], summary: "RSS feed", responses: { "200": { description: "RSS XML" } } } },
+    "/feed/rss/category/{slug}": { get: { tags: ["Feed"], summary: "Category RSS feed", parameters: [{ name: "slug", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "RSS XML" } } } },
+  },
+};
