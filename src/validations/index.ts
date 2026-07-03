@@ -177,3 +177,28 @@ export const pageLayoutSchema = z.object({
   pageType: z.string().min(1).max(50),
   sections: z.array(z.record(z.string(), z.any())),
 });
+
+export const epaperIssueCreateSchema = z.object({
+  siteId: z.number().int().positive(),
+  issueDate: z.coerce.date(),
+  coverImageUrl: z.string().max(1000).optional(),
+  pdfUrl: z.string().max(1000).optional(),
+  status: z.enum(["draft", "published"]).optional(),
+});
+
+export const epaperIssueUpdateSchema = epaperIssueCreateSchema.partial().omit({ siteId: true });
+
+export const epaperPageAddSchema = z.object({
+  pages: z.array(z.object({
+    pageNumber: z.number().int().positive(),
+    imageUrl: z.string().max(1000).min(1),
+    thumbnailUrl: z.string().max(1000).optional(),
+  })).min(1),
+});
+
+export const epaperPageReorderSchema = z.object({
+  pages: z.array(z.object({
+    id: z.number().int().positive(),
+    pageNumber: z.number().int().positive(),
+  })).min(1),
+});

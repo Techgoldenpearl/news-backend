@@ -15,6 +15,13 @@
       "when": 1782720027902,
       "tag": "0001_ambitious_vengeance",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782994440456,
+      "tag": "0002_add_epaper",
+      "breakpoints": true
     }
   ]
 }

@@ -1367,3 +1367,55 @@ export const shokSandeshPackages = pgTable("shok_sandesh_packages", {
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// E-PAPER
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export const epaperStatusEnum = pgEnum("epaper_status", [
+  "draft",
+  "published",
+]);
+
+export const epaperIssues = pgTable(
+  "epaper_issues",
+  {
+    id: serial("id").primaryKey(),
+    siteId: integer("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    issueDate: timestamp("issue_date").notNull(),
+    coverImageUrl: text("cover_image_url"),
+    pdfUrl: text("pdf_url"),
+    status: epaperStatusEnum("status").default("draft").notNull(),
+    publishedAt: timestamp("published_at"),
+    viewsCount: integer("views_count").default(0).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_epaper_site_date").on(table.siteId, table.issueDate),
+    index("idx_epaper_status").on(table.status),
+  ]
+);
+
+export type EpaperIssue = typeof epaperIssues.$inferSelect;
+
+export const epaperPages = pgTable(
+  "epaper_pages",
+  {
+    id: serial("id").primaryKey(),
+    issueId: integer("issue_id")
+      .notNull()
+      .references(() => epaperIssues.id, { onDelete: "cascade" }),
+    pageNumber: integer("page_number").notNull(),
+    imageUrl: text("image_url").notNull(),
+    thumbnailUrl: text("thumbnail_url"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_epaper_pages_issue").on(table.issueId),
+  ]
+);
+
+export type EpaperPage = typeof epaperPages.$inferSelect;

@@ -52,12 +52,12 @@ router.post("/upload", requireAuth, requireEditor, validateBody(mediaUploadSchem
     const mainMime = optimized?.originalMime ?? mimeType;
     const mainExt = optimized ? "webp" : (mimeType === "image/png" ? "png" : mimeType === "image/gif" ? "gif" : "jpg");
 
-    const mainKey = `news-media/${ts}-${id}.${mainExt}`;
+    const mainKey = `${ts}-${id}.${mainExt}`;
     const { url } = await uploadToS3(mainKey, mainBuffer, mainMime);
 
     let thumbnailUrl: string | null = null;
     if (optimized) {
-      const thumbKey = `news-media/${ts}-${id}-thumb.webp`;
+      const thumbKey = `${ts}-${id}-thumb.webp`;
       const thumbResult = await uploadToS3(thumbKey, optimized.thumbnail, optimized.thumbnailMime);
       thumbnailUrl = thumbResult.url;
     }

@@ -24,6 +24,7 @@ import seoRoutes from "./routes/seo.js";
 import feedRoutes from "./routes/feed.js";
 import classifiedsRoutes from "./routes/classifieds.js";
 import shokSandeshRoutes from "./routes/shokSandesh.js";
+import epaperRoutes from "./routes/epaper.js";
 
 const app = express();
 
@@ -80,6 +81,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/seo", seoRoutes);
 app.use("/api/classifieds", classifiedsRoutes);
 app.use("/api/shok-sandesh", shokSandeshRoutes);
+app.use("/api/epaper", epaperRoutes);
 
 // ─── SEO & Feed Routes (non-API, served at root) ───────────────────────────
 app.get("/sitemap.xml", (req, res, next) => { req.url = "/sitemap.xml"; seoRoutes(req, res, next); });
