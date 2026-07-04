@@ -1,6 +1,7 @@
 import {
   boolean,
   decimal,
+  doublePrecision,
   index,
   integer,
   json,
@@ -1059,6 +1060,10 @@ export const ads = pgTable(
     priority: integer("priority").default(0).notNull(),
     advertiserName: varchar("advertiser_name", { length: 200 }),
     notes: text("notes"),
+    impressionCap: integer("impression_cap"),
+    clickCap: integer("click_cap"),
+    impressionCount: integer("impression_count").default(0).notNull(),
+    clickCount: integer("click_count").default(0).notNull(),
     createdBy: integer("created_by"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -1162,6 +1167,8 @@ export const advertiserAdRequests = pgTable(
     budget: decimal("budget", { precision: 10, scale: 2 }),
     cpmRate: decimal("cpm_rate", { precision: 8, scale: 4 }),
     cpcRate: decimal("cpc_rate", { precision: 8, scale: 4 }),
+    impressionCap: integer("impression_cap"),
+    clickCap: integer("click_cap"),
     status: adRequestStatusEnum("status").default("pending").notNull(),
     adminNote: text("admin_note"),
     linkedAdId: integer("linked_ad_id"),
@@ -1377,6 +1384,13 @@ export const epaperStatusEnum = pgEnum("epaper_status", [
   "published",
 ]);
 
+export const epaperProcessingStatusEnum = pgEnum("epaper_processing_status", [
+  "idle",
+  "processing",
+  "completed",
+  "failed",
+]);
+
 export const epaperIssues = pgTable(
   "epaper_issues",
   {
@@ -1385,17 +1399,23 @@ export const epaperIssues = pgTable(
       .notNull()
       .references(() => sites.id, { onDelete: "cascade" }),
     issueDate: timestamp("issue_date").notNull(),
+    edition: varchar("edition", { length: 100 }).default("").notNull(),
     coverImageUrl: text("cover_image_url"),
     pdfUrl: text("pdf_url"),
+    pdfSourceKey: text("pdf_source_key"),
+    sourceType: varchar("source_type", { length: 20 }).default("manual").notNull(),
     status: epaperStatusEnum("status").default("draft").notNull(),
+    processingStatus: epaperProcessingStatusEnum("processing_status").default("idle").notNull(),
+    processingError: text("processing_error"),
     publishedAt: timestamp("published_at"),
     viewsCount: integer("views_count").default(0).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("idx_epaper_site_date").on(table.siteId, table.issueDate),
+    uniqueIndex("idx_epaper_site_date_edition").on(table.siteId, table.issueDate, table.edition),
     index("idx_epaper_status").on(table.status),
+    index("idx_epaper_processing_status").on(table.processingStatus),
   ]
 );
 
@@ -1419,3 +1439,28 @@ export const epaperPages = pgTable(
 );
 
 export type EpaperPage = typeof epaperPages.$inferSelect;
+
+export const epaperPageRegions = pgTable(
+  "epaper_page_regions",
+  {
+    id: serial("id").primaryKey(),
+    pageId: integer("page_id")
+      .notNull()
+      .references(() => epaperPages.id, { onDelete: "cascade" }),
+    articleId: integer("article_id").references(() => articles.id, {
+      onDelete: "set null",
+    }),
+    externalUrl: text("external_url"),
+    x: doublePrecision("x").notNull(),
+    y: doublePrecision("y").notNull(),
+    width: doublePrecision("width").notNull(),
+    height: doublePrecision("height").notNull(),
+    label: varchar("label", { length: 200 }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_epaper_regions_page").on(table.pageId),
+  ]
+);
+
+export type EpaperPageRegion = typeof epaperPageRegions.$inferSelect;

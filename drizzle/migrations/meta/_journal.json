@@ -22,6 +22,27 @@
       "when": 1782994440456,
       "tag": "0002_add_epaper",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783069769720,
+      "tag": "0003_unusual_gideon",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783146442290,
+      "tag": "0004_eminent_nova",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783146494495,
+      "tag": "0005_polite_albert_cleary",
+      "breakpoints": true
     }
   ]
 }

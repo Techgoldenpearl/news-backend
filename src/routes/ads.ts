@@ -3,6 +3,7 @@ import { db } from "../config/db.js";
 import {
   ads, adImpressions, adClicks,
   advertisers, advertiserAdRequests, revenueConfig,
+  adZoneEnum,
 } from "../../drizzle/schema.js";
 import { eq, and, desc, or, isNull, lte, gte, count, sql } from "drizzle-orm";
 import {
@@ -13,6 +14,7 @@ import { parsePagination, cookieOptions } from "../utils/helpers.js";
 import bcrypt from "bcryptjs";
 
 const router = Router();
+const VALID_ZONES = new Set<string>(adZoneEnum.enumValues);
 
 // ─── PUBLIC AD ENDPOINTS ────────────────────────────────────────────────────
 
@@ -20,6 +22,7 @@ const router = Router();
 router.get("/zone/:zone", async (req: Request, res: Response) => {
   try {
     const { zone } = req.params;
+    if (!VALID_ZONES.has(zone)) return res.json(null);
     const device = (req.query.device as string) || "desktop";
     const now = new Date();
 
@@ -30,6 +33,8 @@ router.get("/zone/:zone", async (req: Request, res: Response) => {
       or(eq(ads.deviceTarget, "all"), eq(ads.deviceTarget, device as any)),
       or(isNull(ads.startDate), lte(ads.startDate, now)),
       or(isNull(ads.endDate), gte(ads.endDate, now)),
+      or(isNull(ads.impressionCap), sql`${ads.impressionCount} < ${ads.impressionCap}`),
+      or(isNull(ads.clickCap), sql`${ads.clickCount} < ${ads.clickCap}`),
     ];
     if (siteId) conditions.push(or(eq(ads.siteId, siteId), isNull(ads.siteId)));
 
@@ -47,7 +52,22 @@ router.get("/zone/:zone", async (req: Request, res: Response) => {
 // POST /api/ads/impression
 router.post("/impression", async (req: Request, res: Response) => {
   try {
-    const { adId, sessionId } = req.body;
+    const adId = parseInt(req.body?.adId, 10);
+    const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId : null;
+    if (!Number.isInteger(adId)) return res.status(400).json({ error: "Invalid adId" });
+
+    const [updated] = await db.update(ads).set({
+      impressionCount: sql`${ads.impressionCount} + 1`,
+      status: sql`CASE WHEN ${ads.impressionCap} IS NOT NULL AND ${ads.impressionCount} + 1 >= ${ads.impressionCap} THEN 'paused' ELSE ${ads.status} END`,
+    })
+      .where(and(
+        eq(ads.id, adId),
+        or(isNull(ads.impressionCap), sql`${ads.impressionCount} < ${ads.impressionCap}`),
+      ))
+      .returning({ id: ads.id });
+
+    if (!updated) return res.status(409).json({ error: "Impression cap reached or ad not found" });
+
     await db.insert(adImpressions).values({
       adId,
       sessionId,
@@ -63,7 +83,22 @@ router.post("/impression", async (req: Request, res: Response) => {
 // POST /api/ads/click
 router.post("/click", async (req: Request, res: Response) => {
   try {
-    const { adId, sessionId } = req.body;
+    const adId = parseInt(req.body?.adId, 10);
+    const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId : null;
+    if (!Number.isInteger(adId)) return res.status(400).json({ error: "Invalid adId" });
+
+    const [updated] = await db.update(ads).set({
+      clickCount: sql`${ads.clickCount} + 1`,
+      status: sql`CASE WHEN ${ads.clickCap} IS NOT NULL AND ${ads.clickCount} + 1 >= ${ads.clickCap} THEN 'paused' ELSE ${ads.status} END`,
+    })
+      .where(and(
+        eq(ads.id, adId),
+        or(isNull(ads.clickCap), sql`${ads.clickCount} < ${ads.clickCap}`),
+      ))
+      .returning({ id: ads.id });
+
+    if (!updated) return res.status(409).json({ error: "Click cap reached or ad not found" });
+
     await db.insert(adClicks).values({
       adId,
       sessionId,
@@ -117,7 +152,9 @@ router.post("/admin", requireAuth, requireAdmin, async (req: Request, res: Respo
 // PUT /api/ads/admin/:id
 router.put("/admin/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
-    await db.update(ads).set({ ...req.body, updatedAt: new Date() }).where(eq(ads.id, parseInt(req.params.id)));
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "Invalid ad id" });
+    await db.update(ads).set({ ...req.body, updatedAt: new Date() }).where(eq(ads.id, id));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to update ad" });
@@ -127,7 +164,9 @@ router.put("/admin/:id", requireAuth, requireAdmin, async (req: Request, res: Re
 // DELETE /api/ads/admin/:id
 router.delete("/admin/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
-    await db.delete(ads).where(eq(ads.id, parseInt(req.params.id)));
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "Invalid ad id" });
+    await db.delete(ads).where(eq(ads.id, id));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to delete ad" });
@@ -140,7 +179,7 @@ router.get("/analytics", requireAuth, requireAdmin, async (req: Request, res: Re
     const days = parseInt((req.query.days as string) || "30");
     const since = new Date(Date.now() - days * 24 * 3600 * 1000);
 
-    const zoneSummary = await db
+    const rawSummary = await db
       .select({
         zone: ads.zone,
         impressions: sql<number>`COALESCE(COUNT(DISTINCT ${adImpressions.id}), 0)`,
@@ -151,7 +190,23 @@ router.get("/analytics", requireAuth, requireAdmin, async (req: Request, res: Re
       .leftJoin(adClicks, and(eq(adClicks.adId, ads.id), gte(adClicks.createdAt, since)))
       .groupBy(ads.zone);
 
-    res.json({ zoneSummary });
+    const rates = await db.select().from(revenueConfig);
+    const rateByZone = new Map(rates.map((r) => [r.zone, r]));
+
+    const zoneSummary = rawSummary.map((z) => {
+      const rate = rateByZone.get(z.zone);
+      const cpmRate = rate ? Number(rate.cpmRate) : 0;
+      const cpcRate = rate ? Number(rate.cpcRate) : 0;
+      const impressions = Number(z.impressions);
+      const clicks = Number(z.clicks);
+      const revenue = (impressions / 1000) * cpmRate + clicks * cpcRate;
+      const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+      return { ...z, impressions, clicks, ctr: parseFloat(ctr.toFixed(2)), revenue: parseFloat(revenue.toFixed(2)) };
+    });
+
+    const totalRevenue = parseFloat(zoneSummary.reduce((s, z) => s + z.revenue, 0).toFixed(2));
+
+    res.json({ zoneSummary, totalRevenue, days });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch analytics" });
   }
@@ -350,6 +405,8 @@ router.patch("/admin/requests/:id/approve", requireAuth, requireAdmin, async (re
       endDate: adReq.endDate,
       status: "active",
       priority: 5,
+      impressionCap: adReq.impressionCap,
+      clickCap: adReq.clickCap,
       createdBy: (req as any).user.id,
     }).returning({ id: ads.id });
 
@@ -388,11 +445,17 @@ router.get("/revenue-config", requireAuth, requireAdmin, async (_req: Request, r
 router.put("/revenue-config", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const { zone, cpmRate, cpcRate } = req.body;
+    if (!VALID_ZONES.has(zone)) return res.status(400).json({ error: "Invalid zone" });
+    const cpm = Number(cpmRate);
+    const cpc = Number(cpcRate);
+    if (!Number.isFinite(cpm) || cpm < 0 || !Number.isFinite(cpc) || cpc < 0) {
+      return res.status(400).json({ error: "cpmRate and cpcRate must be non-negative numbers" });
+    }
     const [existing] = await db.select().from(revenueConfig).where(eq(revenueConfig.zone, zone)).limit(1);
     if (existing) {
-      await db.update(revenueConfig).set({ cpmRate, cpcRate }).where(eq(revenueConfig.zone, zone));
+      await db.update(revenueConfig).set({ cpmRate: String(cpm), cpcRate: String(cpc) }).where(eq(revenueConfig.zone, zone));
     } else {
-      await db.insert(revenueConfig).values({ zone, cpmRate, cpcRate });
+      await db.insert(revenueConfig).values({ zone, cpmRate: String(cpm), cpcRate: String(cpc) });
     }
     res.json({ success: true });
   } catch (err) {

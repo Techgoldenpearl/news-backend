@@ -181,6 +181,7 @@ export const pageLayoutSchema = z.object({
 export const epaperIssueCreateSchema = z.object({
   siteId: z.number().int().positive(),
   issueDate: z.coerce.date(),
+  edition: z.string().max(100).trim().optional().default(""),
   coverImageUrl: z.string().max(1000).optional(),
   pdfUrl: z.string().max(1000).optional(),
   status: z.enum(["draft", "published"]).optional(),
@@ -201,4 +202,37 @@ export const epaperPageReorderSchema = z.object({
     id: z.number().int().positive(),
     pageNumber: z.number().int().positive(),
   })).min(1),
+});
+
+export const epaperByDateQuerySchema = z.object({
+  date: z.coerce.date(),
+  edition: z.string().max(100).trim().optional().default(""),
+});
+
+export const epaperCalendarQuerySchema = z.object({
+  month: z.string().regex(/^\d{4}-\d{2}$/, "month must be YYYY-MM"),
+  edition: z.string().max(100).trim().optional().default(""),
+});
+
+export const epaperEditionsForDateQuerySchema = z.object({
+  date: z.coerce.date().optional(),
+});
+
+export const epaperRegionCreateSchema = z.object({
+  articleId: z.number().int().positive().optional(),
+  externalUrl: z.string().url().max(1000).optional(),
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  width: z.number().min(0).max(1),
+  height: z.number().min(0).max(1),
+  label: z.string().max(200).optional(),
+}).refine((d) => d.articleId || d.externalUrl, {
+  message: "Either articleId or externalUrl is required",
+});
+
+export const epaperClipQuerySchema = z.object({
+  x: z.coerce.number().min(0).max(1),
+  y: z.coerce.number().min(0).max(1),
+  width: z.coerce.number().min(0).max(1),
+  height: z.coerce.number().min(0).max(1),
 });
