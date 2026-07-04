@@ -25,7 +25,11 @@ export function cookieOptions(secure: boolean = false) {
   return {
     httpOnly: true,
     secure,
-    sameSite: "lax" as const,
+    // Cross-site deployments (e.g. Vercel frontend + Render backend) require
+    // SameSite=None for the browser to send the cookie at all; that value is
+    // only valid when Secure is also set, so fall back to Lax for plain-HTTP
+    // local dev.
+    sameSite: (secure ? "none" : "lax") as "none" | "lax",
     path: "/",
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   };
