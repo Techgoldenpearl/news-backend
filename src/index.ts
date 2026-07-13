@@ -28,6 +28,13 @@ import epaperRoutes from "./routes/epaper.js";
 
 const app = express();
 
+// Trust the reverse proxy (Nginx/Render/Railway/etc.) so req.ip reflects the
+// real client and rate limiting doesn't bucket all traffic together.
+if (!ENV.isDev) {
+  const trustProxy = /^\d+$/.test(ENV.trustProxy) ? parseInt(ENV.trustProxy, 10) : ENV.trustProxy;
+  app.set("trust proxy", trustProxy);
+}
+
 // ─── Global Middleware ──────────────────────────────────────────────────────
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));

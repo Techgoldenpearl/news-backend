@@ -34,6 +34,10 @@ export const ENV = {
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10),
   rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX || "1000", 10),
 
+  // Number of reverse-proxy hops in front of the app (Nginx, Render, Railway, etc.)
+  // Needed so express-rate-limit keys by real client IP instead of the proxy's IP.
+  trustProxy: process.env.TRUST_PROXY ?? "1",
+
   razorpayKeyId: process.env.RAZORPAY_KEY_ID || "",
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || "",
 
