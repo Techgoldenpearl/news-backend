@@ -271,9 +271,24 @@ router.post("/advertiser/request", requireAdvertiserAuth, async (req: Request, r
   try {
     const adv = (req as any).advertiser;
     if (adv.status !== "active") return res.status(403).json({ error: "Account not approved" });
-    await db.insert(advertiserAdRequests).values({ ...req.body, advertiserId: adv.id, status: "pending" });
+    const { name, zone, imageUrl, linkUrl, altText, width, height, budget, startDate, endDate } = req.body;
+    await db.insert(advertiserAdRequests).values({
+      name,
+      zone,
+      imageUrl,
+      linkUrl,
+      altText,
+      width,
+      height,
+      budget,
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
+      advertiserId: adv.id,
+      status: "pending",
+    });
     res.status(201).json({ success: true });
   } catch (err) {
+    console.error("[Ads] Failed to submit advertiser ad request:", err);
     res.status(500).json({ error: "Failed to submit ad request" });
   }
 });
