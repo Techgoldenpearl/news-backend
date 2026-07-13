@@ -57,6 +57,16 @@ if (!ENV.isDev) {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many requests, please try again later" },
+    // Public reads (articles, categories, epaper, feed, etc.) are the bulk of
+    // a news site's traffic and are frequently shared behind carrier/office
+    // NAT IPs — only rate-limit writes/mutations here, not GET/HEAD reads.
+    // Ad impression/click tracking is also fired by every reader's page (not
+    // just admins/editors), so it's excluded from this limiter too.
+    skip: (req) =>
+      req.method === "GET" ||
+      req.method === "HEAD" ||
+      req.path === "/ads/impression" ||
+      req.path === "/ads/click",
   });
   app.use("/api/", limiter);
 
