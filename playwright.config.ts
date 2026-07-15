@@ -11,4 +11,9 @@ export default defineConfig({
     headless: true,
     screenshot: "only-on-failure",
   },
+  projects: [
+    { name: "backend-api", testDir: "./tests/backend" },
+    { name: "admin-panel", testDir: "./tests/admin" },
+    { name: "public-web", testDir: "./tests/web" },
+  ],
 });

@@ -152,6 +152,7 @@ export const membershipPlanSchema = z.object({
   prioritySupport: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
   isPopular: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export const adCreateSchema = z.object({

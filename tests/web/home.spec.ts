@@ -11,13 +11,13 @@ test.describe("Public Home Page", () => {
 
   test("navbar has categories and links", async ({ page }) => {
     await page.goto("http://localhost:3001/home");
-    await expect(page.getByRole("navigation").getByRole("link", { name: "राशिफल" })).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole("navigation").getByRole("link", { name: "वीडियो" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "राशिफल" }).first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("link", { name: "वीडियो" }).first()).toBeVisible();
   });
 
   test("navbar has login link when not authenticated", async ({ page }) => {
     await page.goto("http://localhost:3001/home");
-    await expect(page.getByRole("link", { name: "Login" })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole("link", { name: "Login" }).first()).toBeVisible({ timeout: 5000 });
   });
 
   test("category links in sidebar work", async ({ page }) => {

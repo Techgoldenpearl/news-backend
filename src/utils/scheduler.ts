@@ -1,5 +1,5 @@
 import { db } from "../config/db.js";
-import { articles, epaperIssues } from "../../drizzle/schema.js";
+import { articles, epaperIssues, userSubscriptions } from "../../drizzle/schema.js";
 import { eq, and, lte } from "drizzle-orm";
 import { refreshUtilityData } from "./utilityDataFetcher.js";
 
@@ -55,11 +55,35 @@ export function startScheduler() {
     }
   }
 
+  async function expireSubscriptions() {
+    try {
+      const now = new Date();
+      const result = await db
+        .update(userSubscriptions)
+        .set({ status: "expired", updatedAt: now })
+        .where(
+          and(
+            eq(userSubscriptions.status, "active"),
+            lte(userSubscriptions.endDate, now)
+          )
+        )
+        .returning({ id: userSubscriptions.id });
+
+      if (result.length > 0) {
+        console.log(`[Scheduler] Expired ${result.length} subscription(s):`, result.map((r) => r.id).join(", "));
+      }
+    } catch (err) {
+      console.error("[Scheduler] Error expiring subscriptions:", err);
+    }
+  }
+
   publishScheduled();
   cleanupStuckEpaperProcessing();
+  expireSubscriptions();
   refreshUtilityData();
   setInterval(publishScheduled, INTERVAL);
   setInterval(cleanupStuckEpaperProcessing, INTERVAL);
+  setInterval(expireSubscriptions, INTERVAL);
   setInterval(refreshUtilityData, UTILITY_DATA_INTERVAL);
   console.log("[Scheduler] Started — checking for scheduled articles every 60s, refreshing utility data every 15m");
 }

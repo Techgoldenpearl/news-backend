@@ -47,16 +47,16 @@ test.describe("Public Auth", () => {
 test.describe("Public Profile (unauthenticated)", () => {
   test("profile page shows login prompt", async ({ page }) => {
     await page.goto("http://localhost:3001/profile");
-    await expect(page.getByRole("link", { name: /Login/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("link", { name: /Login/i }).first()).toBeVisible({ timeout: 10000 });
   });
 
   test("bookmarks page shows login prompt", async ({ page }) => {
     await page.goto("http://localhost:3001/bookmarks");
-    await expect(page.getByRole("link", { name: /Login/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("link", { name: /Login/i }).first()).toBeVisible({ timeout: 10000 });
   });
 
   test("history page shows login prompt", async ({ page }) => {
     await page.goto("http://localhost:3001/history");
-    await expect(page.getByRole("link", { name: /Login/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("link", { name: /Login/i }).first()).toBeVisible({ timeout: 10000 });
   });
 });

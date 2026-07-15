@@ -1,8 +1,10 @@
 import { Router, Request, Response } from "express";
 import { db } from "../config/db.js";
-import { membershipPlans, userSubscriptions, paymentHistory } from "../../drizzle/schema.js";
-import { eq, and, desc, gte, asc } from "drizzle-orm";
+import { membershipPlans, userSubscriptions, paymentHistory, users } from "../../drizzle/schema.js";
+import { eq, and, desc, gte, asc, sql } from "drizzle-orm";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
+import { validateBody } from "../middleware/validate.js";
+import { membershipSubscribeSchema, membershipPlanSchema } from "../validations/index.js";
 
 const router = Router();
 
@@ -40,67 +42,82 @@ router.get("/plans/:slug", async (req: Request, res: Response) => {
 // ─── CUSTOMER: Subscribe ────────────────────────────────────────────────────
 
 // POST /api/membership/subscribe
-router.post("/subscribe", requireAuth, async (req: Request, res: Response) => {
+router.post("/subscribe", requireAuth, validateBody(membershipSubscribeSchema), async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
     const { planId, paymentId, paymentProvider, paymentAmount } = req.body;
 
-    // Get plan details
-    const [plan] = await db
-      .select()
-      .from(membershipPlans)
-      .where(eq(membershipPlans.id, planId))
-      .limit(1);
+    const result = await db.transaction(async (tx) => {
+      const [plan] = await tx
+        .select()
+        .from(membershipPlans)
+        .where(eq(membershipPlans.id, planId))
+        .limit(1);
 
-    if (!plan) return res.status(404).json({ error: "Plan not found" });
+      if (!plan) return { error: "not_found" as const };
 
-    // Check for existing active subscription
-    const [existing] = await db
-      .select()
-      .from(userSubscriptions)
-      .where(
-        and(
-          eq(userSubscriptions.userId, user.id),
-          eq(userSubscriptions.status, "active"),
-          gte(userSubscriptions.endDate, new Date())
+      if (paymentAmount !== undefined && Number(paymentAmount) !== Number(plan.price)) {
+        return { error: "amount_mismatch" as const };
+      }
+
+      // Check for existing active subscription
+      const [existing] = await tx
+        .select()
+        .from(userSubscriptions)
+        .where(
+          and(
+            eq(userSubscriptions.userId, user.id),
+            eq(userSubscriptions.status, "active"),
+            gte(userSubscriptions.endDate, new Date())
+          )
         )
-      )
-      .limit(1);
+        .limit(1)
+        .for("update");
 
-    if (existing) {
+      if (existing) return { error: "already_subscribed" as const };
+
+      const startDate = new Date();
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() + plan.durationDays);
+
+      const [subscription] = await tx
+        .insert(userSubscriptions)
+        .values({
+          userId: user.id,
+          planId,
+          status: "active",
+          startDate,
+          endDate,
+          paymentId,
+          paymentProvider: paymentProvider || "razorpay",
+          paymentAmount: plan.price,
+          paymentCurrency: plan.currency,
+        })
+        .returning();
+
+      // Record payment
+      await tx.insert(paymentHistory).values({
+        userId: user.id,
+        subscriptionId: subscription.id,
+        amount: plan.price,
+        currency: plan.currency,
+        paymentProvider: paymentProvider || "razorpay",
+        paymentId,
+        status: "success",
+      });
+
+      return { subscription, plan, startDate, endDate };
+    });
+
+    if (result.error === "not_found") return res.status(404).json({ error: "Plan not found" });
+    if (result.error === "amount_mismatch") {
+      return res.status(400).json({ error: "Payment amount does not match the plan price" });
+    }
+    if (result.error === "already_subscribed") {
       return res.status(400).json({ error: "You already have an active subscription" });
     }
 
-    const startDate = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + plan.durationDays);
-
-    const [subscription] = await db
-      .insert(userSubscriptions)
-      .values({
-        userId: user.id,
-        planId,
-        status: "active",
-        startDate,
-        endDate,
-        paymentId,
-        paymentProvider: paymentProvider || "razorpay",
-        paymentAmount,
-        paymentCurrency: plan.currency,
-      })
-      .returning();
-
-    // Record payment
-    await db.insert(paymentHistory).values({
-      userId: user.id,
-      subscriptionId: subscription.id,
-      amount: paymentAmount || plan.price,
-      currency: plan.currency,
-      paymentProvider: paymentProvider || "razorpay",
-      paymentId,
-      status: "success",
-    });
-
+    const { subscription, plan, startDate, endDate } = result;
     res.status(201).json({
       success: true,
       subscription: {
@@ -189,8 +206,21 @@ router.get("/payment-history", requireAuth, async (req: Request, res: Response) 
 
 // ─── ADMIN: Plan Management ────────────────────────────────────────────────
 
+// GET /api/membership/admin/plans — all plans, including inactive
+router.get("/admin/plans", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const plans = await db
+      .select()
+      .from(membershipPlans)
+      .orderBy(asc(membershipPlans.sortOrder));
+    res.json(plans);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch plans" });
+  }
+});
+
 // POST /api/membership/admin/plans
-router.post("/admin/plans", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+router.post("/admin/plans", requireAuth, requireAdmin, validateBody(membershipPlanSchema), async (req: Request, res: Response) => {
   try {
     const [plan] = await db.insert(membershipPlans).values(req.body).returning();
     res.status(201).json(plan);
@@ -200,7 +230,7 @@ router.post("/admin/plans", requireAuth, requireAdmin, async (req: Request, res:
 });
 
 // PUT /api/membership/admin/plans/:id
-router.put("/admin/plans/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+router.put("/admin/plans/:id", requireAuth, requireAdmin, validateBody(membershipPlanSchema.partial()), async (req: Request, res: Response) => {
   try {
     await db
       .update(membershipPlans)
@@ -226,7 +256,7 @@ router.delete("/admin/plans/:id", requireAuth, requireAdmin, async (req: Request
 });
 
 // GET /api/membership/admin/subscriptions
-router.get("/admin/subscriptions", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+router.get("/admin/subscriptions", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   try {
     const items = await db
       .select({
@@ -237,14 +267,61 @@ router.get("/admin/subscriptions", requireAuth, requireAdmin, async (req: Reques
         planName: membershipPlans.name,
         paymentAmount: userSubscriptions.paymentAmount,
         createdAt: userSubscriptions.createdAt,
+        userId: users.id,
+        userName: users.name,
+        userEmail: users.email,
       })
       .from(userSubscriptions)
       .leftJoin(membershipPlans, eq(userSubscriptions.planId, membershipPlans.id))
+      .leftJoin(users, eq(userSubscriptions.userId, users.id))
       .orderBy(desc(userSubscriptions.createdAt))
       .limit(50);
-    res.json(items);
+
+    const [{ count: uniqueSubscribers }] = await db
+      .select({ count: sql<number>`count(distinct ${userSubscriptions.userId})::int` })
+      .from(userSubscriptions);
+
+    res.json({ items, uniqueSubscribers });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch subscriptions" });
+  }
+});
+
+// PATCH /api/membership/admin/subscriptions/:id — activate or deactivate a user's subscription
+router.patch("/admin/subscriptions/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { active } = req.body;
+    if (typeof active !== "boolean") {
+      return res.status(400).json({ error: "'active' must be a boolean" });
+    }
+
+    const id = parseInt(req.params.id);
+    const [existing] = await db
+      .select()
+      .from(userSubscriptions)
+      .where(eq(userSubscriptions.id, id))
+      .limit(1);
+
+    if (!existing) return res.status(404).json({ error: "Subscription not found" });
+
+    if (active) {
+      if (existing.endDate < new Date()) {
+        return res.status(400).json({ error: "Cannot activate an expired subscription — extend the end date first" });
+      }
+      await db
+        .update(userSubscriptions)
+        .set({ status: "active", cancelledAt: null, updatedAt: new Date() })
+        .where(eq(userSubscriptions.id, id));
+    } else {
+      await db
+        .update(userSubscriptions)
+        .set({ status: "cancelled", autoRenew: false, cancelledAt: new Date(), updatedAt: new Date() })
+        .where(eq(userSubscriptions.id, id));
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update subscription" });
   }
 });
 

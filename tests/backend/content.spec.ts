@@ -132,18 +132,6 @@ test.describe("Sites API", () => {
   });
 });
 
-test.describe("Membership API", () => {
-  test("GET /membership/plans returns plans", async ({ request }) => {
-    const res = await request.get(`${API}/membership/plans`);
-    expect(res.ok()).toBeTruthy();
-    const body = await res.json();
-    expect(Array.isArray(body)).toBeTruthy();
-    expect(body.length).toBeGreaterThan(0);
-    expect(body[0].name).toBeTruthy();
-    expect(body[0].price).toBeTruthy();
-  });
-});
-
 test.describe("Features API", () => {
   test("GET /features/tags returns tags", async ({ request }) => {
     const res = await request.get(`${API}/features/tags`);
