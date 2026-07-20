@@ -44,20 +44,6 @@ router.get("/packages", async (_req: Request, res: Response) => {
   } catch { res.status(500).json({ error: "Failed to fetch packages" }); }
 });
 
-// GET /api/classifieds/:id — public detail
-router.get("/:id", async (req: Request, res: Response) => {
-  try {
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-
-    const [ad] = await db.select().from(classifiedAds).where(eq(classifiedAds.id, id)).limit(1);
-    if (!ad || ad.status !== "approved") return res.status(404).json({ error: "Ad not found" });
-
-    await db.update(classifiedAds).set({ viewsCount: (ad.viewsCount || 0) + 1 }).where(eq(classifiedAds.id, id));
-    res.json(ad);
-  } catch { res.status(500).json({ error: "Failed to fetch ad" }); }
-});
-
 // POST /api/classifieds/report — report an ad
 router.post("/report", async (req: Request, res: Response) => {
   try {
@@ -78,7 +64,7 @@ router.post("/submit", requireAuth, async (req: Request, res: Response) => {
     const user = (req as any).user;
     const { category, title, titleHindi, description, descriptionHindi, images, price, contactName, contactPhone, contactWhatsapp, contactEmail, city, area, state, packageType } = req.body;
 
-    if (!title || !category) return res.status(400).json({ error: "Title and category required" });
+    if (!title?.trim() || !category) return res.status(400).json({ error: "Title and category required" });
 
     const [ad] = await db.insert(classifiedAds).values({
       userId: user.id,
@@ -102,6 +88,20 @@ router.get("/my-ads", requireAuth, async (req: Request, res: Response) => {
     const items = await db.select().from(classifiedAds).where(eq(classifiedAds.userId, user.id)).orderBy(desc(classifiedAds.createdAt));
     res.json(items);
   } catch { res.status(500).json({ error: "Failed to fetch ads" }); }
+});
+
+// GET /api/classifieds/:id — public detail (must stay below /my-ads, /packages, /report — Express matches single-segment routes in registration order)
+router.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+
+    const [ad] = await db.select().from(classifiedAds).where(eq(classifiedAds.id, id)).limit(1);
+    if (!ad || ad.status !== "approved") return res.status(404).json({ error: "Ad not found" });
+
+    await db.update(classifiedAds).set({ viewsCount: (ad.viewsCount || 0) + 1 }).where(eq(classifiedAds.id, id));
+    res.json(ad);
+  } catch { res.status(500).json({ error: "Failed to fetch ad" }); }
 });
 
 // ─── ADMIN ENDPOINTS ───────────────────────────────────────────────────────

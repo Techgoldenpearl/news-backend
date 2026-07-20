@@ -68,7 +68,7 @@ router.post("/submit", requireAuth, async (req: Request, res: Response) => {
     const user = (req as any).user;
     const { type, deceasedName, deceasedNameHindi, deceasedPhoto, deceasedAge, dateOfDeath, place, city, state, familyName, familyNameHindi, message, messageHindi, eventDetails, eventDetailsHindi, eventDate, eventPlace, templateId, packageType } = req.body;
 
-    if (!deceasedName || !type) return res.status(400).json({ error: "Deceased name and type required" });
+    if (!deceasedName?.trim() || !type) return res.status(400).json({ error: "Deceased name and type required" });
 
     const [entry] = await db.insert(shokSandesh).values({
       userId: user.id,

@@ -692,6 +692,8 @@ export const cities = pgTable("cities", {
   name: varchar("name", { length: 100 }).notNull(),
   nameHindi: varchar("name_hindi", { length: 100 }),
   slug: varchar("slug", { length: 100 }).notNull().unique(),
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
   isActive: boolean("is_active").default(true).notNull(),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),

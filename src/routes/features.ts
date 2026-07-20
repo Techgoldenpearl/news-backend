@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import geoip from "geoip-lite";
 import { db } from "../config/db.js";
 import {
   rashifal, webStories, photoGalleries, galleryImages,
@@ -10,6 +11,7 @@ import {
 import { eq, and, or, desc, asc, sql, inArray, ilike, count } from "drizzle-orm";
 import { requireAuth, requireEditor, optionalAuth } from "../middleware/auth.js";
 import { parsePagination, sanitizeForLike } from "../utils/helpers.js";
+import { ENV } from "../config/env.js";
 
 const router = Router();
 
@@ -216,7 +218,8 @@ router.post("/live-blogs", requireAuth, requireEditor, async (req: Request, res:
   try {
     const [blog] = await db.insert(liveBlogs).values({ articleId: req.body.articleId, isLive: true }).returning();
     res.status(201).json(blog);
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.cause?.code === "23505") return res.status(409).json({ error: "This article already has a live blog" });
     res.status(500).json({ error: "Failed to create live blog" });
   }
 });
@@ -346,6 +349,119 @@ router.get("/locations/states/:slug/articles", async (req: Request, res: Respons
     res.json({ state, articles: items });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch articles" });
+  }
+});
+
+router.get("/locations/states/:slug/cities/:citySlug/articles", async (req: Request, res: Response) => {
+  try {
+    const [state] = await db.select().from(states).where(eq(states.slug, req.params.slug)).limit(1);
+    if (!state) return res.status(404).json({ error: "State not found" });
+
+    const [city] = await db.select().from(cities)
+      .where(and(eq(cities.slug, req.params.citySlug), eq(cities.stateId, state.id))).limit(1);
+    if (!city) return res.status(404).json({ error: "City not found" });
+
+    const { limit, offset } = parsePagination(req.query);
+    const items = await db.select({
+      id: articles.id, title: articles.title, slug: articles.slug,
+      summary: articles.summary, thumbnailUrl: articles.thumbnailUrl,
+      publishedAt: articles.publishedAt, isBreaking: articles.isBreaking,
+      categoryName: categories.name,
+    })
+      .from(articles).leftJoin(categories, eq(articles.categoryId, categories.id))
+      .where(and(eq(articles.status, "published"), eq(articles.state, state.name), eq(articles.city, city.name)))
+      .orderBy(desc(articles.publishedAt)).limit(limit).offset(offset);
+
+    res.json({ state, city, articles: items });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch articles" });
+  }
+});
+
+// geoip-lite reports standard ISO 3166-2:IN subdivision codes, which differ
+// from our seeded `states.code` values for a few states. Map the ISO code to
+// ours wherever they diverge so detection doesn't silently miss real matches.
+const ISO_REGION_TO_STATE_CODE: Record<string, string> = {
+  CT: "CG", // Chhattisgarh
+  OR: "OD", // Odisha
+  UT: "UK", // Uttarakhand
+};
+
+// IP -> state/city auto-detection for pre-filling the location picker.
+router.get("/locations/detect", async (req: Request, res: Response) => {
+  try {
+    let ip = req.ip || "";
+
+    // Local dev never sees a real public IP (trust proxy is only enabled outside
+    // dev), so geoip-lite would always fail on 127.0.0.1/::1. Fall back to a
+    // known-good public IP purely so the feature is testable locally.
+    const isPrivateOrLoopback = /^(127\.|::1|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip) || ip === "";
+    if (ENV.isDev && isPrivateOrLoopback) {
+      ip = "122.161.0.1"; // known India/Delhi range, for local testing only
+    }
+
+    const geo = geoip.lookup(ip);
+    if (!geo || geo.country !== "IN" || !geo.region) return res.json(null);
+
+    const stateCode = ISO_REGION_TO_STATE_CODE[geo.region] ?? geo.region;
+    const [state] = await db.select().from(states)
+      .where(and(eq(states.code, stateCode), eq(states.isActive, true))).limit(1);
+    if (!state) return res.json(null);
+
+    let city = null;
+    if (geo.city) {
+      const [matchedCity] = await db.select().from(cities)
+        .where(and(ilike(cities.name, geo.city), eq(cities.stateId, state.id), eq(cities.isActive, true))).limit(1);
+      city = matchedCity ?? null;
+    }
+    if (!city) return res.json(null);
+
+    res.json({ state, city });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to detect location" });
+  }
+});
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Browser Geolocation coordinates -> nearest seeded city (straight-line distance).
+router.get("/locations/nearest", async (req: Request, res: Response) => {
+  try {
+    const lat = parseFloat(req.query.lat as string);
+    const lng = parseFloat(req.query.lng as string);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: "Invalid lat/lng" });
+    }
+
+    const candidates = await db.select().from(cities)
+      .where(and(eq(cities.isActive, true), sql`${cities.latitude} IS NOT NULL`));
+    if (candidates.length === 0) return res.json(null);
+
+    let nearest = candidates[0];
+    let nearestDist = haversineKm(lat, lng, nearest.latitude!, nearest.longitude!);
+    for (const c of candidates.slice(1)) {
+      const dist = haversineKm(lat, lng, c.latitude!, c.longitude!);
+      if (dist < nearestDist) { nearest = c; nearestDist = dist; }
+    }
+
+    // Beyond this, the visitor almost certainly isn't near any seeded city —
+    // return null rather than a misleadingly distant "nearest" match.
+    if (nearestDist > 500) return res.json(null);
+
+    const [state] = await db.select().from(states).where(eq(states.id, nearest.stateId)).limit(1);
+    if (!state) return res.json(null);
+
+    res.json({ state, city: nearest });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to find nearest location" });
   }
 });
 
@@ -627,6 +743,10 @@ router.put("/notification-prefs", requireAuth, async (req: Request, res: Respons
 });
 
 // Push Subscriptions
+router.get("/push-vapid-key", (_req: Request, res: Response) => {
+  res.json({ publicKey: ENV.vapidPublicKey });
+});
+
 router.post("/push-subscribe", optionalAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.id ?? null;

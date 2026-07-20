@@ -43,6 +43,13 @@
       "when": 1783146494495,
       "tag": "0005_polite_albert_cleary",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784198206293,
+      "tag": "0006_careless_karma",
+      "breakpoints": true
     }
   ]
 }

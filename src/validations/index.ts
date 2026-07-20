@@ -72,6 +72,29 @@ export const categoryCreateSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+export const stateCreateSchema = z.object({
+  name: z.string().min(2).max(100),
+  nameHindi: z.string().max(100).optional(),
+  slug: z.string().min(2).max(100),
+  code: z.string().max(10).optional(),
+  thumbnailUrl: z.string().max(1000).optional(),
+  sortOrder: z.number().int().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const stateUpdateSchema = stateCreateSchema.partial();
+
+export const cityCreateSchema = z.object({
+  stateId: z.number().int().positive(),
+  name: z.string().min(2).max(100),
+  nameHindi: z.string().max(100).optional(),
+  slug: z.string().min(2).max(100),
+  sortOrder: z.number().int().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const cityUpdateSchema = cityCreateSchema.partial();
+
 export const siteCreateSchema = z.object({
   name: z.string().min(2).max(200),
   slug: z.string().min(2).max(100),
