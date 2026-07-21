@@ -268,9 +268,9 @@ router.get("/topics/:slug", async (req: Request, res: Response) => {
 
     const { limit, offset } = parsePagination(req.query);
     const topicArticles = await db.select({
-      id: articles.id, title: articles.title, slug: articles.slug,
+      id: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
       summary: articles.summary, thumbnailUrl: articles.thumbnailUrl,
-      publishedAt: articles.publishedAt, categoryName: categories.name,
+      publishedAt: articles.publishedAt, categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(articleTopics)
       .innerJoin(articles, eq(articleTopics.articleId, articles.id))
@@ -337,10 +337,10 @@ router.get("/locations/states/:slug/articles", async (req: Request, res: Respons
 
     const { limit, offset } = parsePagination(req.query);
     const items = await db.select({
-      id: articles.id, title: articles.title, slug: articles.slug,
+      id: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
       summary: articles.summary, thumbnailUrl: articles.thumbnailUrl,
       publishedAt: articles.publishedAt, isBreaking: articles.isBreaking,
-      categoryName: categories.name,
+      categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(articles).leftJoin(categories, eq(articles.categoryId, categories.id))
       .where(and(eq(articles.status, "published"), eq(articles.state, state.name)))
@@ -363,10 +363,10 @@ router.get("/locations/states/:slug/cities/:citySlug/articles", async (req: Requ
 
     const { limit, offset } = parsePagination(req.query);
     const items = await db.select({
-      id: articles.id, title: articles.title, slug: articles.slug,
+      id: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
       summary: articles.summary, thumbnailUrl: articles.thumbnailUrl,
       publishedAt: articles.publishedAt, isBreaking: articles.isBreaking,
-      categoryName: categories.name,
+      categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(articles).leftJoin(categories, eq(articles.categoryId, categories.id))
       .where(and(eq(articles.status, "published"), eq(articles.state, state.name), eq(articles.city, city.name)))
@@ -486,9 +486,9 @@ router.get("/authors/:slug", async (req: Request, res: Response) => {
 
     const { limit, offset } = parsePagination(req.query);
     const authorArticles = await db.select({
-      id: articles.id, title: articles.title, slug: articles.slug,
+      id: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
       summary: articles.summary, thumbnailUrl: articles.thumbnailUrl,
-      publishedAt: articles.publishedAt, categoryName: categories.name,
+      publishedAt: articles.publishedAt, categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(articles).leftJoin(categories, eq(articles.categoryId, categories.id))
       .where(and(eq(articles.authorId, author.id), eq(articles.status, "published")))
@@ -546,9 +546,9 @@ router.get("/bookmarks", requireAuth, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
     const items = await db.select({
-      id: articles.id, title: articles.title, slug: articles.slug,
+      id: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
       thumbnailUrl: articles.thumbnailUrl, publishedAt: articles.publishedAt,
-      categoryName: categories.name,
+      categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(bookmarks)
       .innerJoin(articles, eq(bookmarks.articleId, articles.id))
@@ -617,8 +617,8 @@ router.get("/reading-history", requireAuth, async (req: Request, res: Response) 
     const user = (req as any).user;
     const items = await db.select({
       id: readingHistory.id, readAt: readingHistory.readAt,
-      articleId: articles.id, title: articles.title, slug: articles.slug,
-      thumbnailUrl: articles.thumbnailUrl, categoryName: categories.name,
+      articleId: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
+      thumbnailUrl: articles.thumbnailUrl, categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(readingHistory)
       .innerJoin(articles, eq(readingHistory.articleId, articles.id))
@@ -670,10 +670,10 @@ router.get("/search", async (req: Request, res: Response) => {
     if (siteId) conditions.push(or(eq(articles.siteId, siteId), eq(articles.isGlobal, true)));
 
     const results = await db.select({
-      id: articles.id, title: articles.title, slug: articles.slug,
+      id: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
       summary: articles.summary, thumbnailUrl: articles.thumbnailUrl,
       publishedAt: articles.publishedAt,
-      categoryName: categories.name, categorySlug: categories.slug,
+      categoryName: categories.name, categoryNameHindi: categories.nameHindi, categorySlug: categories.slug,
     })
       .from(articles).leftJoin(categories, eq(articles.categoryId, categories.id))
       .where(and(...conditions))

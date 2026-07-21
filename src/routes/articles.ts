@@ -62,6 +62,7 @@ router.get("/", optionalAuth, async (req: Request, res: Response) => {
           readTimeMinutes: articles.readTimeMinutes,
           publishedAt: articles.publishedAt,
           categoryName: categories.name,
+          categoryNameHindi: categories.nameHindi,
           categorySlug: categories.slug,
           categoryColor: categories.color,
         })
