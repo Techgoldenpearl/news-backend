@@ -8,6 +8,9 @@ const pool = new pg.Pool({
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+  ssl: ENV.databaseUrl.includes("supabase.com")
+    ? { rejectUnauthorized: false }
+    : undefined,
 });
 
 pool.on("error", (err) => {
