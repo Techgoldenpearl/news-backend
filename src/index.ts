@@ -128,7 +128,6 @@ app.get("/api/health", (_req, res) => {
     timestamp: new Date().toISOString(),
     env: ENV.nodeEnv,
     uptime: Math.floor(process.uptime()),
-    deployTest: "auto-deploy-verified",
   });
 });
 
