@@ -139,10 +139,15 @@ router.get("/admin/list", requireAuth, requireEditor, async (req: Request, res: 
 // GET /api/articles/:slug — public article detail
 router.get("/:slug", optionalAuth, async (req: Request, res: Response) => {
   try {
+    const resolvedSiteId = (req as any).site?.id;
+
+    const conditions = [eq(articles.slug, req.params.slug)];
+    if (resolvedSiteId) conditions.push(or(eq(articles.siteId, resolvedSiteId), eq(articles.isGlobal, true))!);
+
     const [article] = await db
       .select()
       .from(articles)
-      .where(eq(articles.slug, req.params.slug))
+      .where(and(...conditions))
       .limit(1);
 
     if (!article) return res.status(404).json({ error: "Article not found" });

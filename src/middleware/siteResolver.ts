@@ -8,7 +8,11 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 export async function siteResolver(req: Request, _res: Response, next: NextFunction) {
   try {
-    const hostname = req.hostname;
+    // X-Site-Domain is set by nginx on proxied requests and forwarded explicitly
+    // by news-web's server-side fetches (server-api.ts), since Next.js SSR runs
+    // in a separate Node process where req.hostname would otherwise be the
+    // internal container host rather than the visitor's actual domain.
+    const hostname = (req.headers["x-site-domain"] as string | undefined) || req.hostname;
     const siteSlug = req.headers["x-site-id"] as string | undefined;
 
     const cacheKey = siteSlug || hostname;
