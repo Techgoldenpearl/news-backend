@@ -1,7 +1,8 @@
 import { Router, Request, Response } from "express";
 import { db } from "../config/db.js";
 import { articles, categories, sites } from "../../drizzle/schema.js";
-import { eq, and, desc, or } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
+import { articleMatchesSite } from "../utils/helpers.js";
 
 const router = Router();
 
@@ -21,7 +22,7 @@ router.get("/rss", async (req: Request, res: Response) => {
     const siteName = site?.name || "News Platform";
 
     const conditions: any[] = [eq(articles.status, "published")];
-    if (site) conditions.push(or(eq(articles.siteId, site.id), eq(articles.isGlobal, true)));
+    if (site) conditions.push(articleMatchesSite(site.id));
 
     const items = await db
       .select({

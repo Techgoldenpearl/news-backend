@@ -35,7 +35,11 @@ export async function fullTextSearch(query: string, limit: number = 20, offset: 
 
   if (!tsQuery) return { items: [], total: 0 };
 
-  const siteFilter = siteId ? sql`AND (a.site_id = ${siteId} OR a.is_global = true)` : sql``;
+  const siteFilter = siteId
+    ? sql`AND (a.site_id = ${siteId} OR a.is_global = true OR EXISTS (
+        SELECT 1 FROM article_websites aw WHERE aw.article_id = a.id AND aw.site_id = ${siteId}
+      ))`
+    : sql``;
 
   const results = await db.execute(sql`
     SELECT

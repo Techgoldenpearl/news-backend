@@ -490,6 +490,76 @@ export const articleTags = pgTable("article_tags", {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ARTICLE WEBSITES (Junction — publish one article to many sites)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export const articleWebsites = pgTable(
+  "article_websites",
+  {
+    id: serial("id").primaryKey(),
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    siteId: integer("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_article_websites_unique").on(table.articleId, table.siteId),
+    index("idx_article_websites_site").on(table.siteId),
+  ]
+);
+
+export type ArticleWebsite = typeof articleWebsites.$inferSelect;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// WEBSITE CATEGORIES (Junction — per-site category display overrides)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export const websiteCategories = pgTable(
+  "website_categories",
+  {
+    id: serial("id").primaryKey(),
+    siteId: integer("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    categoryId: integer("category_id")
+      .notNull()
+      .references(() => categories.id, { onDelete: "cascade" }),
+    displayName: varchar("display_name", { length: 100 }),
+    displayOrder: integer("display_order").default(0),
+    isVisible: boolean("is_visible").default(true).notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_website_categories_unique").on(table.siteId, table.categoryId),
+  ]
+);
+
+export type WebsiteCategory = typeof websiteCategories.$inferSelect;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ARTICLE LOCATIONS (Junction — structured state/city links)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export const articleLocations = pgTable(
+  "article_locations",
+  {
+    id: serial("id").primaryKey(),
+    articleId: integer("article_id")
+      .notNull()
+      .references(() => articles.id, { onDelete: "cascade" }),
+    stateId: integer("state_id").references(() => states.id, { onDelete: "cascade" }),
+    cityId: integer("city_id").references(() => cities.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    index("idx_article_locations_article").on(table.articleId),
+  ]
+);
+
+export type ArticleLocation = typeof articleLocations.$inferSelect;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ARTICLE MEDIA
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

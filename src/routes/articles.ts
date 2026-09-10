@@ -1,9 +1,9 @@
 import { Router, Request, Response } from "express";
 import { db } from "../config/db.js";
-import { articles, categories, articleTags, tags, articleMedia } from "../../drizzle/schema.js";
+import { articles, categories, articleTags, tags, articleMedia, sites, articleWebsites, articleLocations, states, cities } from "../../drizzle/schema.js";
 import { eq, and, desc, sql, or, ilike, count, gte } from "drizzle-orm";
 import { requireAuth, requireEditor, optionalAuth } from "../middleware/auth.js";
-import { parsePagination, sanitizeForLike } from "../utils/helpers.js";
+import { parsePagination, sanitizeForLike, articleMatchesSite, categoryMatchesSite } from "../utils/helpers.js";
 import { articleCreateSchema, articleUpdateSchema } from "../validations/index.js";
 import { validateBody } from "../middleware/validate.js";
 import { cacheGet, cacheSet, cacheDel, TTL } from "../config/redis.js";
@@ -22,7 +22,7 @@ router.get("/", optionalAuth, async (req: Request, res: Response) => {
 
     const conditions: any[] = [eq(articles.status, "published")];
 
-    if (resolvedSiteId) conditions.push(or(eq(articles.siteId, resolvedSiteId), eq(articles.isGlobal, true)));
+    if (resolvedSiteId) conditions.push(articleMatchesSite(resolvedSiteId));
 
     if (categoryId) conditions.push(eq(articles.categoryId, parseInt(categoryId)));
     if (isBreaking === "true") conditions.push(eq(articles.isBreaking, true));
@@ -35,7 +35,7 @@ router.get("/", optionalAuth, async (req: Request, res: Response) => {
 
     if (categorySlug) {
       const categoryConditions = [eq(categories.slug, categorySlug)];
-      if (resolvedSiteId) categoryConditions.push(eq(categories.siteId, resolvedSiteId));
+      if (resolvedSiteId) categoryConditions.push(categoryMatchesSite(resolvedSiteId));
       const [cat] = await db.select({ id: categories.id }).from(categories).where(and(...categoryConditions)).limit(1);
       if (cat) conditions.push(eq(articles.categoryId, cat.id));
       else conditions.push(sql`false`);
@@ -117,9 +117,17 @@ router.get("/admin/list", requireAuth, requireEditor, async (req: Request, res: 
           createdAt: articles.createdAt,
           categoryName: categories.name,
           siteId: articles.siteId,
+          siteName: sites.name,
+          siteNames: sql<string | null>`(
+            select string_agg(${sites.name}, ', ')
+            from ${articleWebsites}
+            join ${sites} on ${sites.id} = ${articleWebsites.siteId}
+            where ${articleWebsites.articleId} = ${articles.id}
+          )`,
         })
         .from(articles)
         .leftJoin(categories, eq(articles.categoryId, categories.id))
+        .leftJoin(sites, eq(articles.siteId, sites.id))
         .where(conditions.length > 0 ? and(...conditions) : undefined)
         .orderBy(desc(articles.createdAt))
         .limit(limit)
@@ -137,17 +145,16 @@ router.get("/admin/list", requireAuth, requireEditor, async (req: Request, res: 
 });
 
 // GET /api/articles/:slug — public article detail
+// Note: intentionally NOT scoped by site — an article's permalink must always
+// resolve regardless of which site is currently active in the visitor's
+// browser/session (e.g. after switching sites, or opening an old bookmarked/
+// shared link). Site-scoping still applies to listings, search, and feeds.
 router.get("/:slug", optionalAuth, async (req: Request, res: Response) => {
   try {
-    const resolvedSiteId = (req as any).site?.id;
-
-    const conditions = [eq(articles.slug, req.params.slug)];
-    if (resolvedSiteId) conditions.push(or(eq(articles.siteId, resolvedSiteId), eq(articles.isGlobal, true))!);
-
     const [article] = await db
       .select()
       .from(articles)
-      .where(and(...conditions))
+      .where(eq(articles.slug, req.params.slug))
       .limit(1);
 
     if (!article) return res.status(404).json({ error: "Article not found" });
@@ -185,7 +192,7 @@ router.get("/:slug", optionalAuth, async (req: Request, res: Response) => {
       }
     }
 
-    const [category, articleTagsList, media] = await Promise.all([
+    const [category, articleTagsList, media, siteLinks, locationLinks] = await Promise.all([
       db.select().from(categories).where(eq(categories.id, article.categoryId)).limit(1),
       db
         .select({ id: tags.id, name: tags.name, slug: tags.slug })
@@ -193,6 +200,13 @@ router.get("/:slug", optionalAuth, async (req: Request, res: Response) => {
         .innerJoin(tags, eq(articleTags.tagId, tags.id))
         .where(eq(articleTags.articleId, article.id)),
       db.select().from(articleMedia).where(eq(articleMedia.articleId, article.id)),
+      db.select({ siteId: articleWebsites.siteId }).from(articleWebsites).where(eq(articleWebsites.articleId, article.id)),
+      db
+        .select({ stateId: articleLocations.stateId, cityId: articleLocations.cityId, stateName: states.name, cityName: cities.name })
+        .from(articleLocations)
+        .leftJoin(states, eq(articleLocations.stateId, states.id))
+        .leftJoin(cities, eq(articleLocations.cityId, cities.id))
+        .where(eq(articleLocations.articleId, article.id)),
     ]);
 
     // Increment views async
@@ -208,6 +222,8 @@ router.get("/:slug", optionalAuth, async (req: Request, res: Response) => {
       category: category[0] ?? null,
       tags: articleTagsList,
       media,
+      siteIds: siteLinks.map((s) => s.siteId),
+      locationIds: locationLinks,
     });
   } catch (err) {
     console.error("[Articles] Detail error:", err);
@@ -219,7 +235,7 @@ router.get("/:slug", optionalAuth, async (req: Request, res: Response) => {
 router.post("/", requireAuth, requireEditor, validateBody(articleCreateSchema), auditAction("article.create", "article"), async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    const { tagIds, ...articleData } = req.body;
+    const { tagIds, siteIds, locationIds, ...articleData } = req.body;
 
     if (articleData.content) articleData.content = sanitizeHtml(articleData.content);
 
@@ -246,6 +262,23 @@ router.post("/", requireAuth, requireEditor, validateBody(articleCreateSchema), 
       );
     }
 
+    const resolvedSiteIds: number[] = siteIds?.length ? siteIds : (articleData.siteId ? [articleData.siteId] : []);
+    if (resolvedSiteIds.length) {
+      await db.insert(articleWebsites).values(
+        resolvedSiteIds.map((siteId) => ({ articleId: newArticle.id, siteId }))
+      );
+    }
+
+    if (locationIds?.length) {
+      await db.insert(articleLocations).values(
+        locationIds.map((loc: { stateId?: number; cityId?: number }) => ({
+          articleId: newArticle.id,
+          stateId: loc.stateId ?? null,
+          cityId: loc.cityId ?? null,
+        }))
+      );
+    }
+
     await cacheDel("articles:*");
     res.status(201).json({ success: true, id: newArticle.id });
   } catch (err) {
@@ -258,7 +291,7 @@ router.post("/", requireAuth, requireEditor, validateBody(articleCreateSchema), 
 router.put("/:id", requireAuth, requireEditor, auditAction("article.update", "article"), async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
-    const { tagIds, ...data } = req.body;
+    const { tagIds, siteIds, locationIds, ...data } = req.body;
 
     if (data.status === "published" && !data.publishedAt) {
       data.publishedAt = new Date();
@@ -274,6 +307,28 @@ router.put("/:id", requireAuth, requireEditor, auditAction("article.update", "ar
       if (tagIds.length > 0) {
         await db.insert(articleTags).values(
           tagIds.map((tagId: number) => ({ articleId: id, tagId }))
+        );
+      }
+    }
+
+    if (siteIds !== undefined) {
+      await db.delete(articleWebsites).where(eq(articleWebsites.articleId, id));
+      if (siteIds.length > 0) {
+        await db.insert(articleWebsites).values(
+          siteIds.map((siteId: number) => ({ articleId: id, siteId }))
+        );
+      }
+    }
+
+    if (locationIds !== undefined) {
+      await db.delete(articleLocations).where(eq(articleLocations.articleId, id));
+      if (locationIds.length > 0) {
+        await db.insert(articleLocations).values(
+          locationIds.map((loc: { stateId?: number; cityId?: number }) => ({
+            articleId: id,
+            stateId: loc.stateId ?? null,
+            cityId: loc.cityId ?? null,
+          }))
         );
       }
     }

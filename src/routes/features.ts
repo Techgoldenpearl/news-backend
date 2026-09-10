@@ -10,7 +10,7 @@ import {
 } from "../../drizzle/schema.js";
 import { eq, and, or, desc, asc, sql, inArray, ilike, count } from "drizzle-orm";
 import { requireAuth, requireEditor, optionalAuth } from "../middleware/auth.js";
-import { parsePagination, sanitizeForLike } from "../utils/helpers.js";
+import { parsePagination, sanitizeForLike, articleMatchesSite } from "../utils/helpers.js";
 import { ENV } from "../config/env.js";
 
 const router = Router();
@@ -667,7 +667,7 @@ router.get("/search", async (req: Request, res: Response) => {
     }
 
     const conditions: any[] = [eq(articles.status, "published"), ilike(articles.title, `%${sanitizeForLike(query as string)}%`)];
-    if (siteId) conditions.push(or(eq(articles.siteId, siteId), eq(articles.isGlobal, true)));
+    if (siteId) conditions.push(articleMatchesSite(siteId));
 
     const results = await db.select({
       id: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,

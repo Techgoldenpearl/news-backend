@@ -1,8 +1,11 @@
 import { Router, Request, Response } from "express";
 import { db } from "../config/db.js";
-import { categories } from "../../drizzle/schema.js";
+import { categories, websiteCategories } from "../../drizzle/schema.js";
 import { eq, and, asc } from "drizzle-orm";
 import { requireAuth, requireEditor, requireAdmin } from "../middleware/auth.js";
+import { validateBody } from "../middleware/validate.js";
+import { websiteCategoryUpsertSchema } from "../validations/index.js";
+import { categoryMatchesSite } from "../utils/helpers.js";
 
 const router = Router();
 
@@ -14,13 +17,52 @@ router.get("/", async (req: Request, res: Response) => {
 
     const conditions: any[] = [];
     if (activeOnly) conditions.push(eq(categories.isActive, true));
-    if (siteId) conditions.push(eq(categories.siteId, siteId));
+    if (siteId) conditions.push(categoryMatchesSite(siteId));
 
-    const items = await db
-      .select()
+    if (!siteId) {
+      const items = await db
+        .select()
+        .from(categories)
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .orderBy(asc(categories.sortOrder));
+      return res.json(items);
+    }
+
+    const rows = await db
+      .select({
+        id: categories.id,
+        siteId: categories.siteId,
+        name: categories.name,
+        nameHindi: categories.nameHindi,
+        slug: categories.slug,
+        description: categories.description,
+        iconUrl: categories.iconUrl,
+        color: categories.color,
+        parentId: categories.parentId,
+        sortOrder: categories.sortOrder,
+        isActive: categories.isActive,
+        showInNav: categories.showInNav,
+        createdAt: categories.createdAt,
+        updatedAt: categories.updatedAt,
+        overrideDisplayName: websiteCategories.displayName,
+        overrideDisplayOrder: websiteCategories.displayOrder,
+        overrideIsVisible: websiteCategories.isVisible,
+      })
       .from(categories)
+      .leftJoin(
+        websiteCategories,
+        and(eq(websiteCategories.categoryId, categories.id), eq(websiteCategories.siteId, siteId))
+      )
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(asc(categories.sortOrder));
+
+    const items = rows
+      .filter((r) => r.overrideIsVisible !== false)
+      .map((r) => ({
+        ...r,
+        name: r.overrideDisplayName || r.name,
+        sortOrder: r.overrideDisplayOrder ?? r.sortOrder,
+      }));
 
     res.json(items);
   } catch (err) {
@@ -33,7 +75,7 @@ router.get("/:slug", async (req: Request, res: Response) => {
   try {
     const siteId = req.query.siteId ? parseInt(req.query.siteId as string) : (req as any).site?.id;
     const conditions: any[] = [eq(categories.slug, req.params.slug)];
-    if (siteId) conditions.push(eq(categories.siteId, siteId));
+    if (siteId) conditions.push(categoryMatchesSite(siteId));
 
     const [cat] = await db
       .select()
@@ -78,6 +120,84 @@ router.delete("/:id", requireAuth, requireAdmin, async (req: Request, res: Respo
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to delete category" });
+  }
+});
+
+// GET /api/categories/:id/websites — list existing per-site overrides for a category
+router.get("/:id/websites", requireAuth, requireEditor, async (req: Request, res: Response) => {
+  try {
+    const categoryId = parseInt(req.params.id);
+    const rows = await db
+      .select({
+        siteId: websiteCategories.siteId,
+        displayName: websiteCategories.displayName,
+        displayOrder: websiteCategories.displayOrder,
+        isVisible: websiteCategories.isVisible,
+      })
+      .from(websiteCategories)
+      .where(eq(websiteCategories.categoryId, categoryId));
+
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch website category overrides" });
+  }
+});
+
+// PUT /api/categories/:id/websites/:siteId — upsert a per-site display override
+router.put(
+  "/:id/websites/:siteId",
+  requireAuth,
+  requireEditor,
+  validateBody(websiteCategoryUpsertSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const categoryId = parseInt(req.params.id);
+      const siteId = parseInt(req.params.siteId);
+      const { displayName, displayOrder, isVisible } = req.body;
+
+      const [existing] = await db
+        .select({ id: websiteCategories.id })
+        .from(websiteCategories)
+        .where(and(eq(websiteCategories.categoryId, categoryId), eq(websiteCategories.siteId, siteId)))
+        .limit(1);
+
+      if (existing) {
+        await db
+          .update(websiteCategories)
+          .set({
+            ...(displayName !== undefined && { displayName: displayName || null }),
+            ...(displayOrder !== undefined && { displayOrder }),
+            ...(isVisible !== undefined && { isVisible }),
+          })
+          .where(eq(websiteCategories.id, existing.id));
+      } else {
+        await db.insert(websiteCategories).values({
+          categoryId,
+          siteId,
+          displayName: displayName || null,
+          displayOrder: displayOrder ?? 0,
+          isVisible: isVisible ?? true,
+        });
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update website category override" });
+    }
+  }
+);
+
+// DELETE /api/categories/:id/websites/:siteId — remove a per-site override (revert to defaults)
+router.delete("/:id/websites/:siteId", requireAuth, requireEditor, async (req: Request, res: Response) => {
+  try {
+    const categoryId = parseInt(req.params.id);
+    const siteId = parseInt(req.params.siteId);
+    await db
+      .delete(websiteCategories)
+      .where(and(eq(websiteCategories.categoryId, categoryId), eq(websiteCategories.siteId, siteId)));
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to remove website category override" });
   }
 });
 

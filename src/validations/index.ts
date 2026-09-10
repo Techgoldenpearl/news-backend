@@ -55,6 +55,11 @@ export const articleCreateSchema = z.object({
   readTimeMinutes: z.number().int().min(1).max(60).nullable().optional(),
   scheduledAt: z.coerce.date().nullable().optional(),
   tagIds: z.array(z.number().int().positive()).optional(),
+  siteIds: z.array(z.number().int().positive()).optional(),
+  locationIds: z.array(z.object({
+    stateId: z.number().int().positive().nullable().optional(),
+    cityId: z.number().int().positive().nullable().optional(),
+  })).optional(),
 });
 
 export const articleUpdateSchema = articleCreateSchema.partial();
@@ -70,6 +75,12 @@ export const categoryCreateSchema = z.object({
   siteId: z.number().int().positive().nullable().optional(),
   showInNav: z.boolean().optional(),
   isActive: z.boolean().optional(),
+});
+
+export const websiteCategoryUpsertSchema = z.object({
+  displayName: z.string().max(100).optional().or(z.literal("")),
+  displayOrder: z.number().int().optional(),
+  isVisible: z.boolean().optional(),
 });
 
 export const stateCreateSchema = z.object({
