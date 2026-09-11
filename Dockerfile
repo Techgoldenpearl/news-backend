@@ -1,5 +1,6 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+# pdfjs-dist (E-Paper PDF processing) needs Promise.withResolvers, unavailable before Node 22.
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 # node-gyp needs these to compile canvas' native bindings on Alpine (musl)
@@ -11,7 +12,7 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: Production ──────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
