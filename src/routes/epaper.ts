@@ -296,18 +296,40 @@ router.get("/:id/pages/:pageId/clip", validateQuery(epaperClipQuerySchema), asyn
 router.get("/admin/list", requireAuth, requireEditor, async (req: Request, res: Response) => {
   try {
     const { limit, offset } = parsePagination(req.query);
-    const { siteId, status } = req.query as any;
+    const { siteId, status, from, to } = req.query as any;
 
     const conditions: any[] = [];
     if (siteId) conditions.push(eq(epaperIssues.siteId, parseInt(siteId)));
     if (status) conditions.push(eq(epaperIssues.status, status));
+    if (from) conditions.push(gte(epaperIssues.issueDate, new Date(from)));
+    if (to) conditions.push(lte(epaperIssues.issueDate, new Date(to)));
 
     const [items, [total]] = await Promise.all([
       db.select().from(epaperIssues).where(conditions.length ? and(...conditions) : undefined).orderBy(desc(epaperIssues.issueDate)).limit(limit).offset(offset),
       db.select({ c: count() }).from(epaperIssues).where(conditions.length ? and(...conditions) : undefined),
     ]);
 
-    res.json({ items, total: Number(total?.c ?? 0) });
+    // Attach each issue's first-page thumbnail as a fallback cover (PDF-sourced issues have no coverImageUrl).
+    const issueIds = items.map((i) => i.id);
+    const firstPages = issueIds.length
+      ? await db
+          .select({
+            issueId: epaperPages.issueId,
+            pageNumber: epaperPages.pageNumber,
+            thumbnailUrl: epaperPages.thumbnailUrl,
+            imageUrl: epaperPages.imageUrl,
+          })
+          .from(epaperPages)
+          .where(inArray(epaperPages.issueId, issueIds))
+          .orderBy(asc(epaperPages.pageNumber))
+      : [];
+    const coverByIssue = new Map<number, string>();
+    for (const p of firstPages) {
+      if (!coverByIssue.has(p.issueId)) coverByIssue.set(p.issueId, p.thumbnailUrl || p.imageUrl);
+    }
+    const itemsWithCover = items.map((i) => ({ ...i, firstPageThumbnailUrl: coverByIssue.get(i.id) ?? null }));
+
+    res.json({ items: itemsWithCover, total: Number(total?.c ?? 0) });
   } catch { res.status(500).json({ error: "Failed to fetch issues" }); }
 });
 

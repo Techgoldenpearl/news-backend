@@ -38,10 +38,11 @@ export async function processPdfIssue(issueId: number, pdfBuffer: Buffer): Promi
       .set({ processingStatus: "completed", updatedAt: new Date() })
       .where(eq(epaperIssues.id, issueId));
   } catch (err: any) {
+    console.error(`[epaper] PDF processing failed for issue ${issueId}:`, err);
     await db.update(epaperIssues)
       .set({
         processingStatus: "failed",
-        processingError: err?.message ?? "Unknown error during PDF processing",
+        processingError: err?.stack ?? err?.message ?? "Unknown error during PDF processing",
         updatedAt: new Date(),
       })
       .where(eq(epaperIssues.id, issueId));
