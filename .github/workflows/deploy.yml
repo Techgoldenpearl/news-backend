@@ -2,7 +2,7 @@ name: Deploy to EC2
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["Build and push image"]
     branches: [main]
     types: [completed]
 
@@ -17,10 +17,9 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          command_timeout: 30m
+          command_timeout: 10m
           script: |
-            cd ~/news-platform/news-backend
-            git pull origin main
             cd ~/news-platform
-            docker compose -f docker-compose.prod.yml --env-file .env up -d --build api
+            docker compose -f docker-compose.prod.yml --env-file .env pull api
+            docker compose -f docker-compose.prod.yml --env-file .env up -d api
             docker image prune -f
