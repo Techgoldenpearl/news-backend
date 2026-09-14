@@ -11,6 +11,7 @@ const router = Router();
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const allSites = await db.select().from(sites).orderBy(sites.name);
+    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
     res.json(allSites);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch sites" });
@@ -22,6 +23,7 @@ router.get("/resolve", async (req: Request, res: Response) => {
   try {
     const site = (req as any).site;
     if (!site) return res.status(404).json({ error: "Site not found" });
+    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
     res.json(site);
   } catch (err) {
     res.status(500).json({ error: "Failed to resolve site" });
@@ -43,6 +45,7 @@ router.get("/:id", async (req: Request, res: Response) => {
       .from(siteSettings)
       .where(eq(siteSettings.siteId, site.id));
 
+    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
     res.json({ ...site, settings });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch site" });

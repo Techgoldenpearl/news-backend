@@ -41,6 +41,18 @@ router.get("/", optionalAuth, async (req: Request, res: Response) => {
       else conditions.push(sql`false`);
     }
 
+    // Public, unauthenticated reads are the vast majority of traffic and are
+    // identical across requests for the same query params — cache them.
+    const isCacheable = !(req as any).user;
+    const cacheKey = isCacheable ? `articles:list:${resolvedSiteId ?? "all"}:${JSON.stringify(req.query)}` : null;
+    if (cacheKey) {
+      const cached = await cacheGet<{ items: unknown[]; total: number; hasMore: boolean }>(cacheKey);
+      if (cached) {
+        res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=60");
+        return res.json(cached);
+      }
+    }
+
     const [items, [total]] = await Promise.all([
       db
         .select({
@@ -78,11 +90,18 @@ router.get("/", optionalAuth, async (req: Request, res: Response) => {
         .where(and(...conditions)),
     ]);
 
-    res.json({
+    const payload = {
       items,
       total: Number(total?.c ?? 0),
       hasMore: offset + items.length < Number(total?.c ?? 0),
-    });
+    };
+
+    if (cacheKey) {
+      cacheSet(cacheKey, payload, TTL.SHORT).catch(() => {});
+      res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=60");
+    }
+
+    res.json(payload);
   } catch (err) {
     console.error("[Articles] List error:", err);
     res.status(500).json({ error: "Failed to fetch articles" });
@@ -151,6 +170,21 @@ router.get("/admin/list", requireAuth, requireEditor, async (req: Request, res: 
 // shared link). Site-scoping still applies to listings, search, and feeds.
 router.get("/:slug", optionalAuth, async (req: Request, res: Response) => {
   try {
+    const isAnonymous = !(req as any).user;
+    const detailCacheKey = isAnonymous ? `articles:detail:${req.params.slug}` : null;
+    if (detailCacheKey) {
+      const cached = await cacheGet<Record<string, unknown>>(detailCacheKey);
+      if (cached) {
+        res.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+        db.update(articles)
+          .set({ viewsCount: sql`${articles.viewsCount} + 1` })
+          .where(eq(articles.slug, req.params.slug))
+          .then(() => {})
+          .catch(() => {});
+        return res.json(cached);
+      }
+    }
+
     const [article] = await db
       .select()
       .from(articles)
@@ -217,14 +251,22 @@ router.get("/:slug", optionalAuth, async (req: Request, res: Response) => {
       .catch(() => {});
 
     const { ...safeArticle } = article;
-    res.json({
+    const detailPayload = {
       ...safeArticle,
       category: category[0] ?? null,
       tags: articleTagsList,
       media,
       siteIds: siteLinks.map((s) => s.siteId),
       locationIds: locationLinks,
-    });
+    };
+
+    // Premium articles vary by subscription/auth state — never cache those.
+    if (detailCacheKey && !article.isPremium) {
+      cacheSet(detailCacheKey, detailPayload, TTL.MEDIUM).catch(() => {});
+      res.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    }
+
+    res.json(detailPayload);
   } catch (err) {
     console.error("[Articles] Detail error:", err);
     res.status(500).json({ error: "Failed to fetch article" });
@@ -333,6 +375,7 @@ router.put("/:id", requireAuth, requireEditor, auditAction("article.update", "ar
       }
     }
 
+    await cacheDel("articles:*");
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to update article" });
@@ -343,6 +386,7 @@ router.put("/:id", requireAuth, requireEditor, auditAction("article.update", "ar
 router.delete("/:id", requireAuth, requireEditor, auditAction("article.delete", "article"), async (req: Request, res: Response) => {
   try {
     await db.delete(articles).where(eq(articles.id, parseInt(req.params.id)));
+    await cacheDel("articles:*");
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to delete article" });
@@ -365,6 +409,7 @@ router.patch("/:id/toggle-breaking", requireAuth, requireEditor, async (req: Req
       }
     }
 
+    await cacheDel("articles:*");
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to toggle breaking" });
@@ -377,6 +422,7 @@ router.patch("/:id/toggle-trending", requireAuth, requireEditor, async (req: Req
     const id = parseInt(req.params.id);
     const { isTrending } = req.body;
     await db.update(articles).set({ isTrending }).where(eq(articles.id, id));
+    await cacheDel("articles:*");
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to toggle trending" });
@@ -389,6 +435,7 @@ router.patch("/:id/toggle-featured", requireAuth, requireEditor, async (req: Req
     const id = parseInt(req.params.id);
     const { isFeatured } = req.body;
     await db.update(articles).set({ isFeatured }).where(eq(articles.id, id));
+    await cacheDel("articles:*");
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to toggle featured" });

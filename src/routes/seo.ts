@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { db } from "../config/db.js";
 import { articles, categories, sites } from "../../drizzle/schema.js";
 import { eq, desc } from "drizzle-orm";
+import { cacheGet, cacheSet, TTL } from "../config/redis.js";
 
 const router = Router();
 
@@ -10,6 +11,13 @@ router.get("/sitemap.xml", async (req: Request, res: Response) => {
   try {
     const site = (req as any).site;
     const baseUrl = site?.domain ? `https://${site.domain}` : `http://${req.hostname}`;
+    const cacheKey = `sitemap:${site?.id ?? baseUrl}`;
+
+    const cached = await cacheGet<string>(cacheKey);
+    if (cached) {
+      res.set("Cache-Control", "public, max-age=900, stale-while-revalidate=1800");
+      return res.header("Content-Type", "application/xml").send(cached);
+    }
 
     const allArticles = await db
       .select({ slug: articles.slug, publishedAt: articles.publishedAt, updatedAt: articles.updatedAt })
@@ -42,6 +50,8 @@ ${urls.map((u) => `  <url>
   </url>`).join("\n")}
 </urlset>`;
 
+    cacheSet(cacheKey, xml, TTL.LONG).catch(() => {});
+    res.set("Cache-Control", "public, max-age=900, stale-while-revalidate=1800");
     res.header("Content-Type", "application/xml").send(xml);
   } catch (err) {
     res.status(500).send("<!-- Error generating sitemap -->");
@@ -51,6 +61,7 @@ ${urls.map((u) => `  <url>
 // GET /robots.txt
 router.get("/robots.txt", (req: Request, res: Response) => {
   const baseUrl = `http://${req.hostname}`;
+  res.set("Cache-Control", "public, max-age=3600");
   res.header("Content-Type", "text/plain").send(`User-agent: *
 Allow: /
 Disallow: /api/

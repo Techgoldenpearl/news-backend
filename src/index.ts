@@ -4,6 +4,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
+import compression from "compression";
 import { ENV } from "./config/env.js";
 import { checkDbConnection } from "./config/db.js";
 import { optionalAuth } from "./middleware/auth.js";
@@ -39,6 +40,7 @@ if (!ENV.isDev) {
 // ─── Global Middleware ──────────────────────────────────────────────────────
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use(compression());
 app.use(
   cors({
     origin: ENV.corsOrigins,
