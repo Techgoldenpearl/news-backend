@@ -24,14 +24,13 @@ export async function sendEmail(to: string, subject: string, html: string) {
   });
 }
 
-export async function sendPasswordResetEmail(to: string, token: string) {
-  const resetUrl = `${ENV.corsOrigins[0]}/reset-password?token=${token}`;
-  await sendEmail(to, "Reset Your Password", `
+export async function sendPasswordResetOtpEmail(to: string, otp: string) {
+  await sendEmail(to, "Your Password Reset Code", `
     <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
       <h2>Reset Your Password</h2>
-      <p>You requested a password reset. Click the button below to set a new password:</p>
-      <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 8px; margin: 16px 0;">Reset Password</a>
-      <p style="color: #666; font-size: 14px;">This link expires in 1 hour. If you didn't request this, ignore this email.</p>
+      <p>You requested a password reset. Use the code below to continue — it expires in 10 minutes:</p>
+      <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px; background: #f3f4f6; padding: 16px 24px; border-radius: 8px; text-align: center; margin: 16px 0;">${otp}</div>
+      <p style="color: #666; font-size: 14px;">If you didn't request this, you can safely ignore this email.</p>
     </div>
   `);
 }

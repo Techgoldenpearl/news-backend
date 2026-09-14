@@ -12,6 +12,8 @@ import {
 } from "../middleware/auth.js";
 import { parsePagination, cookieOptions } from "../utils/helpers.js";
 import bcrypt from "bcryptjs";
+import { validateBody } from "../middleware/validate.js";
+import { advertiserRegisterSchema } from "../validations/index.js";
 
 const router = Router();
 const VALID_ZONES = new Set<string>(adZoneEnum.enumValues);
@@ -215,7 +217,7 @@ router.get("/analytics", requireAuth, requireAdmin, async (req: Request, res: Re
 // ─── ADVERTISER PORTAL ──────────────────────────────────────────────────────
 
 // POST /api/ads/advertiser/register
-router.post("/advertiser/register", async (req: Request, res: Response) => {
+router.post("/advertiser/register", validateBody(advertiserRegisterSchema), async (req: Request, res: Response) => {
   try {
     const { companyName, contactName, email, password, phone, gstNumber, website } = req.body;
     const [existing] = await db.select({ id: advertisers.id }).from(advertisers).where(eq(advertisers.email, email)).limit(1);

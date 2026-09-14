@@ -7,13 +7,24 @@ import {
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import { requireAuth, requireEditor, requireReporterAuth, signReporterToken } from "../middleware/auth.js";
 import { parsePagination, cookieOptions } from "../utils/helpers.js";
+import { validateBody } from "../middleware/validate.js";
+import {
+  reporterRegisterSchema,
+  reporterProfileUpdateSchema,
+  changePasswordSchema,
+  mediaUploadSchema,
+} from "../validations/index.js";
+import { uploadToS3, deleteFromS3 } from "../config/storage.js";
+import { optimizeAvatar } from "../utils/imageOptimizer.js";
+
+const MAX_AVATAR_BASE64_SIZE = 7_000_000; // ~5MB decoded
 
 const router = Router();
 
 // ─── REPORTER AUTH ──────────────────────────────────────────────────────────
 
 // POST /api/reporters/register
-router.post("/register", async (req: Request, res: Response) => {
+router.post("/register", validateBody(reporterRegisterSchema), async (req: Request, res: Response) => {
   try {
     const { name, nameHindi, email, password, phone, designation, beat, city, state, bio } = req.body;
     const [existing] = await db.select({ id: reporters.id }).from(reporters).where(eq(reporters.email, email)).limit(1);
@@ -79,12 +90,12 @@ router.post("/logout", (_req: Request, res: Response) => {
 });
 
 // PUT /api/reporters/profile
-router.put("/profile", requireReporterAuth, async (req: Request, res: Response) => {
+router.put("/profile", requireReporterAuth, validateBody(reporterProfileUpdateSchema), async (req: Request, res: Response) => {
   try {
     const reporter = (req as any).reporter;
-    const { nameHindi, phone, designation, beat, city, state, bio, twitterHandle, facebookUrl } = req.body;
+    const { name, nameHindi, phone, designation, beat, city, state, bio, twitterHandle, facebookUrl } = req.body;
     await db.update(reporters).set({
-      nameHindi, phone, designation, beat, city, state, bio, twitterHandle, facebookUrl,
+      name, nameHindi, phone, designation, beat, city, state, bio, twitterHandle, facebookUrl,
       updatedAt: new Date(),
     }).where(eq(reporters.id, reporter.id));
     res.json({ success: true });
@@ -93,8 +104,39 @@ router.put("/profile", requireReporterAuth, async (req: Request, res: Response) 
   }
 });
 
+// POST /api/reporters/photo — upload/replace the reporter's own profile photo
+router.post("/photo", requireReporterAuth, validateBody(mediaUploadSchema), async (req: Request, res: Response) => {
+  try {
+    const reporter = (req as any).reporter;
+    const { base64 } = req.body;
+
+    if (base64.length > MAX_AVATAR_BASE64_SIZE) {
+      return res.status(400).json({ error: "Image too large (max 5MB)" });
+    }
+
+    const rawBuffer = Buffer.from(base64, "base64");
+    const { buffer, mimeType } = await optimizeAvatar(rawBuffer);
+
+    const key = `reporters/${reporter.id}-${Date.now()}.webp`;
+    const { url } = await uploadToS3(key, buffer, mimeType);
+
+    const [existing] = await db.select({ photoKey: reporters.photoKey }).from(reporters).where(eq(reporters.id, reporter.id)).limit(1);
+
+    await db.update(reporters).set({ photoUrl: url, photoKey: key, updatedAt: new Date() }).where(eq(reporters.id, reporter.id));
+
+    if (existing?.photoKey) {
+      await deleteFromS3(existing.photoKey).catch(() => {});
+    }
+
+    res.json({ success: true, photoUrl: url });
+  } catch (err) {
+    console.error("[Reporter] Photo upload error:", err);
+    res.status(500).json({ error: "Photo upload failed" });
+  }
+});
+
 // PUT /api/reporters/change-password
-router.put("/change-password", requireReporterAuth, async (req: Request, res: Response) => {
+router.put("/change-password", requireReporterAuth, validateBody(changePasswordSchema), async (req: Request, res: Response) => {
   try {
     const reporter = (req as any).reporter;
     const { currentPassword, newPassword } = req.body;

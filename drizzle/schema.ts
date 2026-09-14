@@ -300,6 +300,28 @@ export type InsertUser = typeof users.$inferInsert;
 export type SafeUser = Omit<User, "passwordHash">;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PASSWORD RESET OTPS (forgot-password email OTP flow)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export const passwordResetOtps = pgTable(
+  "password_reset_otps",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull(),
+    otpHash: text("otp_hash").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    consumedAt: timestamp("consumed_at"),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_password_reset_otps_user").on(table.userId),
+  ]
+);
+
+export type PasswordResetOtp = typeof passwordResetOtps.$inferSelect;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // MEMBERSHIP PLANS & SUBSCRIPTIONS (customer premium access)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

@@ -15,6 +15,8 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/seed.ts",
+    "seed:load-test": "tsx scripts/seed-load-test.ts",
+    "cleanup:load-test": "tsx scripts/cleanup-load-test.ts",
     "lint": "eslint src/",
     "format": "prettier --write .",
     "test:e2e": "npx playwright test",

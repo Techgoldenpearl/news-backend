@@ -47,6 +47,7 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
         name: users.name,
         email: users.email,
         phone: users.phone,
+        bio: users.bio,
         role: users.role,
         avatarUrl: users.avatarUrl,
         isVerified: users.isVerified,

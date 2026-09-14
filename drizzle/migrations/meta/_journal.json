@@ -57,6 +57,13 @@
       "when": 1789024800240,
       "tag": "0007_faithful_patriot",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789205611883,
+      "tag": "0008_awesome_zombie",
+      "breakpoints": true
     }
   ]
 }

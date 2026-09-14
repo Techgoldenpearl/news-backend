@@ -79,6 +79,14 @@ if (!ENV.isDev) {
   app.use("/api/auth/login", authLimiter);
   app.use("/api/reporters/login", authLimiter);
   app.use("/api/ads/advertiser/login", authLimiter);
+
+  const otpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    message: { error: "Too many requests, please try again later" },
+  });
+  app.use("/api/auth/forgot-password", otpLimiter);
+  app.use("/api/auth/verify-otp", otpLimiter);
 }
 
 // Site resolver — attaches site context from hostname/header

@@ -1,15 +1,45 @@
 import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { db } from "../config/db.js";
-import { users, userSubscriptions, membershipPlans } from "../../drizzle/schema.js";
-import { eq, and, gte } from "drizzle-orm";
+import { users, userSubscriptions, membershipPlans, passwordResetOtps } from "../../drizzle/schema.js";
+import { eq, and, gte, desc } from "drizzle-orm";
 import { signUserToken, requireAuth } from "../middleware/auth.js";
 import { cookieOptions } from "../utils/helpers.js";
-import { registerSchema, loginSchema, profileUpdateSchema, changePasswordSchema } from "../validations/index.js";
+import {
+  registerSchema,
+  loginSchema,
+  profileUpdateSchema,
+  changePasswordSchema,
+  forgotPasswordSchema,
+  verifyOtpSchema,
+  resetPasswordSchema,
+  mediaUploadSchema,
+} from "../validations/index.js";
 import { validateBody } from "../middleware/validate.js";
-import { sendPasswordResetEmail, sendVerificationEmail } from "../utils/email.js";
+import { sendPasswordResetOtpEmail, sendVerificationEmail } from "../utils/email.js";
 import { ENV } from "../config/env.js";
+import { uploadToS3 } from "../config/storage.js";
+import { optimizeAvatar } from "../utils/imageOptimizer.js";
+
+const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const OTP_MAX_ATTEMPTS = 5;
+const RESET_TOKEN_TTL = "10m";
+const MAX_AVATAR_BASE64_SIZE = 7_000_000; // ~5MB decoded
+
+const DEV_FIXED_OTP = "123456";
+
+function generateOtp(): string {
+  // Fixed OTP in development so the flow can be tested without real email delivery.
+  // Never active outside development — ENV.isDev is false whenever NODE_ENV=production.
+  if (ENV.isDev) return DEV_FIXED_OTP;
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
+}
+
+function hashOtp(otp: string): string {
+  return crypto.createHash("sha256").update(otp).digest("hex");
+}
 
 const SECRET = new TextEncoder().encode(ENV.jwtSecret);
 
@@ -176,6 +206,31 @@ router.put("/profile", requireAuth, validateBody(profileUpdateSchema), async (re
   }
 });
 
+// POST /api/auth/avatar — upload/replace the current user's profile picture
+router.post("/avatar", requireAuth, validateBody(mediaUploadSchema), async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const { base64 } = req.body;
+
+    if (base64.length > MAX_AVATAR_BASE64_SIZE) {
+      return res.status(400).json({ error: "Image too large (max 5MB)" });
+    }
+
+    const rawBuffer = Buffer.from(base64, "base64");
+    const { buffer, mimeType } = await optimizeAvatar(rawBuffer);
+
+    const key = `avatars/${user.id}-${Date.now()}.webp`;
+    const { url } = await uploadToS3(key, buffer, mimeType);
+
+    await db.update(users).set({ avatarUrl: url, updatedAt: new Date() }).where(eq(users.id, user.id));
+
+    res.json({ success: true, avatarUrl: url });
+  } catch (err) {
+    console.error("[Auth] Avatar upload error:", err);
+    res.status(500).json({ error: "Avatar upload failed" });
+  }
+});
+
 // PUT /api/auth/change-password
 router.put("/change-password", requireAuth, validateBody(changePasswordSchema), async (req: Request, res: Response) => {
   try {
@@ -223,11 +278,12 @@ router.delete("/account", requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+const GENERIC_OTP_MESSAGE = "If the email exists, a verification code has been sent";
+
 // POST /api/auth/forgot-password
-router.post("/forgot-password", async (req: Request, res: Response) => {
+router.post("/forgot-password", validateBody(forgotPasswordSchema), async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email is required" });
 
     const [user] = await db
       .select({ id: users.id, email: users.email })
@@ -236,32 +292,97 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
       .limit(1);
 
     if (!user) {
-      return res.json({ success: true, message: "If the email exists, a reset link has been sent" });
+      return res.json({ success: true, message: GENERIC_OTP_MESSAGE });
     }
 
-    const token = await new SignJWT({ userId: user.id, type: "password_reset" })
-      .setProtectedHeader({ alg: "HS256" })
-      .setExpirationTime("1h")
-      .sign(SECRET);
+    const otp = generateOtp();
+    const otpHash = hashOtp(otp);
 
-    await sendPasswordResetEmail(email, token).catch((e) => console.warn("[Auth] Email send failed:", e.message));
-    res.json({ success: true, message: "If the email exists, a reset link has been sent" });
+    // Invalidate any previous outstanding OTPs for this user, then issue a fresh one.
+    await db
+      .update(passwordResetOtps)
+      .set({ consumedAt: new Date() })
+      .where(and(eq(passwordResetOtps.userId, user.id), gte(passwordResetOtps.expiresAt, new Date())));
+
+    await db.insert(passwordResetOtps).values({
+      userId: user.id,
+      otpHash,
+      expiresAt: new Date(Date.now() + OTP_TTL_MS),
+    });
+
+    if (ENV.isDev) {
+      console.log(`[Auth][DEV] Password reset OTP for ${email}: ${otp}`);
+    }
+    await sendPasswordResetOtpEmail(email, otp).catch((e) => console.warn("[Auth] Email send failed:", e.message));
+    res.json({ success: true, message: GENERIC_OTP_MESSAGE });
   } catch (err) {
     console.error("[Auth] Forgot password error:", err);
-    res.json({ success: true, message: "If the email exists, a reset link has been sent" });
+    res.json({ success: true, message: GENERIC_OTP_MESSAGE });
+  }
+});
+
+// POST /api/auth/verify-otp
+router.post("/verify-otp", validateBody(verifyOtpSchema), async (req: Request, res: Response) => {
+  try {
+    const { email, otp } = req.body;
+
+    const [user] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    if (!user) {
+      return res.status(400).json({ error: "Invalid or expired code" });
+    }
+
+    const [latest] = await db
+      .select()
+      .from(passwordResetOtps)
+      .where(eq(passwordResetOtps.userId, user.id))
+      .orderBy(desc(passwordResetOtps.createdAt))
+      .limit(1);
+
+    const active = latest && !latest.consumedAt && latest.expiresAt > new Date() ? latest : null;
+
+    if (!active) {
+      return res.status(400).json({ error: "Invalid or expired code" });
+    }
+
+    if (active.attempts >= OTP_MAX_ATTEMPTS) {
+      await db.update(passwordResetOtps).set({ consumedAt: new Date() }).where(eq(passwordResetOtps.id, active.id));
+      return res.status(400).json({ error: "Too many incorrect attempts. Please request a new code." });
+    }
+
+    if (hashOtp(otp) !== active.otpHash) {
+      await db
+        .update(passwordResetOtps)
+        .set({ attempts: active.attempts + 1 })
+        .where(eq(passwordResetOtps.id, active.id));
+      return res.status(400).json({ error: "Incorrect code" });
+    }
+
+    await db.update(passwordResetOtps).set({ consumedAt: new Date() }).where(eq(passwordResetOtps.id, active.id));
+
+    const resetToken = await new SignJWT({ userId: user.id, type: "password_reset_verified" })
+      .setProtectedHeader({ alg: "HS256" })
+      .setExpirationTime(RESET_TOKEN_TTL)
+      .sign(SECRET);
+
+    res.json({ success: true, resetToken });
+  } catch (err) {
+    console.error("[Auth] Verify OTP error:", err);
+    res.status(500).json({ error: "Failed to verify code" });
   }
 });
 
 // POST /api/auth/reset-password
-router.post("/reset-password", async (req: Request, res: Response) => {
+router.post("/reset-password", validateBody(resetPasswordSchema), async (req: Request, res: Response) => {
   try {
-    const { token, newPassword } = req.body;
-    if (!token || !newPassword || newPassword.length < 8) {
-      return res.status(400).json({ error: "Token and new password (min 8 chars) required" });
-    }
+    const { resetToken, newPassword } = req.body;
 
-    const { payload } = await jwtVerify(token, SECRET);
-    if ((payload as any).type !== "password_reset") {
+    const { payload } = await jwtVerify(resetToken, SECRET);
+    if ((payload as any).type !== "password_reset_verified") {
       return res.status(400).json({ error: "Invalid reset token" });
     }
 
@@ -272,7 +393,7 @@ router.post("/reset-password", async (req: Request, res: Response) => {
     res.json({ success: true });
   } catch (err: any) {
     if (err.code === "ERR_JWT_EXPIRED") {
-      return res.status(400).json({ error: "Reset link has expired" });
+      return res.status(400).json({ error: "Reset session has expired, please verify the code again" });
     }
     console.error("[Auth] Reset password error:", err);
     res.status(400).json({ error: "Invalid or expired reset token" });

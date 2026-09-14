@@ -3,8 +3,18 @@ import { z } from "zod";
 export const registerSchema = z.object({
   name: z.string().min(2).max(200).optional(),
   email: z.string().email().max(320),
-  phone: z.string().max(20).optional(),
-  password: z.string().min(8).max(128),
+  phone: z
+    .string()
+    .regex(/^[0-9]{10}$/, "Phone number must be exactly 10 digits")
+    .optional()
+    .or(z.literal("")),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(128)
+    .regex(/[a-z]/, "Password must include a lowercase letter")
+    .regex(/[A-Z]/, "Password must include an uppercase letter")
+    .regex(/[0-9]/, "Password must include a number"),
   loginMethod: z.enum(["email", "google", "phone"]).optional(),
 });
 
@@ -15,7 +25,11 @@ export const loginSchema = z.object({
 
 export const profileUpdateSchema = z.object({
   name: z.string().min(2).max(200).optional(),
-  phone: z.string().max(20).optional(),
+  phone: z
+    .string()
+    .regex(/^[0-9]{10}$/, "Phone number must be exactly 10 digits")
+    .optional()
+    .or(z.literal("")),
   bio: z.string().max(2000).optional(),
   avatarUrl: z.string().url().optional(),
   preferences: z.object({
@@ -26,6 +40,26 @@ export const profileUpdateSchema = z.object({
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
+  newPassword: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(128)
+    .regex(/[a-z]/, "Password must include a lowercase letter")
+    .regex(/[A-Z]/, "Password must include an uppercase letter")
+    .regex(/[0-9]/, "Password must include a number"),
+});
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+export const verifyOtpSchema = z.object({
+  email: z.string().email(),
+  otp: z.string().length(6).regex(/^\d{6}$/, "OTP must be 6 digits"),
+});
+
+export const resetPasswordSchema = z.object({
+  resetToken: z.string().min(1),
   newPassword: z.string().min(8).max(128),
 });
 
@@ -145,7 +179,11 @@ export const reporterRegisterSchema = z.object({
   nameHindi: z.string().max(200).optional(),
   email: z.string().email().max(320),
   password: z.string().min(8).max(128),
-  phone: z.string().max(20).optional(),
+  phone: z
+    .string()
+    .regex(/^[0-9]{10}$/, "Phone number must be exactly 10 digits")
+    .optional()
+    .or(z.literal("")),
   designation: z.string().max(100).optional(),
   beat: z.string().max(100).optional(),
   city: z.string().max(100).optional(),
@@ -153,12 +191,33 @@ export const reporterRegisterSchema = z.object({
   bio: z.string().max(2000).optional(),
 });
 
+export const reporterProfileUpdateSchema = z.object({
+  name: z.string().min(2, "Name must be at least 2 characters").max(200).optional(),
+  nameHindi: z.string().max(200).optional(),
+  phone: z
+    .string()
+    .regex(/^[0-9]{10}$/, "Phone number must be exactly 10 digits")
+    .optional()
+    .or(z.literal("")),
+  designation: z.string().max(100).optional(),
+  beat: z.string().max(100).optional(),
+  city: z.string().max(100).optional(),
+  state: z.string().max(100).optional(),
+  bio: z.string().max(2000).optional(),
+  twitterHandle: z.string().max(100).optional(),
+  facebookUrl: z.string().max(300).optional(),
+});
+
 export const advertiserRegisterSchema = z.object({
   companyName: z.string().min(2).max(200),
   contactName: z.string().min(2).max(200),
   email: z.string().email().max(320),
   password: z.string().min(8).max(128),
-  phone: z.string().max(20).optional(),
+  phone: z
+    .string()
+    .regex(/^[0-9]{10}$/, "Phone number must be exactly 10 digits")
+    .optional()
+    .or(z.literal("")),
   gstNumber: z.string().max(50).optional(),
   website: z.string().url().max(500).optional(),
 });

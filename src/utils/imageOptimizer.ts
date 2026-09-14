@@ -11,6 +11,16 @@ const MAX_WIDTH = 1600;
 const THUMB_WIDTH = 400;
 const QUALITY = 80;
 
+const AVATAR_SIZE = 400;
+
+export async function optimizeAvatar(buffer: Buffer): Promise<{ buffer: Buffer; mimeType: string }> {
+  const optimized = await sharp(buffer)
+    .resize(AVATAR_SIZE, AVATAR_SIZE, { fit: "cover" })
+    .webp({ quality: 80 })
+    .toBuffer();
+  return { buffer: optimized, mimeType: "image/webp" };
+}
+
 export async function optimizeImage(buffer: Buffer, mimeType: string): Promise<OptimizedResult> {
   const image = sharp(buffer);
   const metadata = await image.metadata();
