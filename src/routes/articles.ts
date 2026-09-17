@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { db } from "../config/db.js";
 import { articles, categories, articleTags, tags, articleMedia, sites, articleWebsites, articleLocations, states, cities } from "../../drizzle/schema.js";
-import { eq, and, desc, sql, or, ilike, count, gte } from "drizzle-orm";
+import { eq, and, desc, asc, sql, or, ilike, count, gte } from "drizzle-orm";
 import { requireAuth, requireEditor, optionalAuth } from "../middleware/auth.js";
 import { parsePagination, sanitizeForLike, articleMatchesSite, categoryMatchesSite } from "../utils/helpers.js";
 import { articleCreateSchema, articleUpdateSchema } from "../validations/index.js";
@@ -16,7 +16,7 @@ const router = Router();
 router.get("/", optionalAuth, async (req: Request, res: Response) => {
   try {
     const { limit, offset } = parsePagination(req.query);
-    const { categorySlug, categoryId, isBreaking, isTrending, isFeatured, contentType, state, city, search, siteId } = req.query as any;
+    const { categorySlug, categoryId, isBreaking, isTrending, isFeatured, contentType, state, city, search, siteId, sort } = req.query as any;
 
     const resolvedSiteId = siteId ? parseInt(siteId) : (req as any).site?.id;
 
@@ -81,7 +81,11 @@ router.get("/", optionalAuth, async (req: Request, res: Response) => {
         .from(articles)
         .leftJoin(categories, eq(articles.categoryId, categories.id))
         .where(and(...conditions))
-        .orderBy(desc(articles.publishedAt))
+        .orderBy(
+          sort === "views" ? desc(articles.viewsCount)
+            : sort === "oldest" ? asc(articles.publishedAt)
+            : desc(articles.publishedAt)
+        )
         .limit(limit)
         .offset(offset),
       db
@@ -170,17 +174,26 @@ router.get("/admin/list", requireAuth, requireEditor, async (req: Request, res: 
 // shared link). Site-scoping still applies to listings, search, and feeds.
 router.get("/:slug", optionalAuth, async (req: Request, res: Response) => {
   try {
+    // The article page fetches this route twice — once server-side (for
+    // generateMetadata/JSON-LD, on every request including bots and social
+    // link-preview crawlers) and once client-side (the actual visitor's
+    // browser rendering the page). Only the latter should count as a real
+    // view; the server-side SEO fetch passes noCount=1 to opt out.
+    const shouldCountView = req.query.noCount !== "1";
+
     const isAnonymous = !(req as any).user;
     const detailCacheKey = isAnonymous ? `articles:detail:${req.params.slug}` : null;
     if (detailCacheKey) {
       const cached = await cacheGet<Record<string, unknown>>(detailCacheKey);
       if (cached) {
         res.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-        db.update(articles)
-          .set({ viewsCount: sql`${articles.viewsCount} + 1` })
-          .where(eq(articles.slug, req.params.slug))
-          .then(() => {})
-          .catch(() => {});
+        if (shouldCountView) {
+          db.update(articles)
+            .set({ viewsCount: sql`${articles.viewsCount} + 1` })
+            .where(eq(articles.slug, req.params.slug))
+            .then(() => {})
+            .catch(() => {});
+        }
         return res.json(cached);
       }
     }
@@ -243,12 +256,14 @@ router.get("/:slug", optionalAuth, async (req: Request, res: Response) => {
         .where(eq(articleLocations.articleId, article.id)),
     ]);
 
-    // Increment views async
-    db.update(articles)
-      .set({ viewsCount: sql`${articles.viewsCount} + 1` })
-      .where(eq(articles.id, article.id))
-      .then(() => {})
-      .catch(() => {});
+    // Increment views async (skipped for the server-side SEO-metadata fetch — see above)
+    if (shouldCountView) {
+      db.update(articles)
+        .set({ viewsCount: sql`${articles.viewsCount} + 1` })
+        .where(eq(articles.id, article.id))
+        .then(() => {})
+        .catch(() => {});
+    }
 
     const { ...safeArticle } = article;
     const detailPayload = {

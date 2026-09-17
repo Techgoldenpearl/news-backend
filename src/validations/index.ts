@@ -218,8 +218,8 @@ export const advertiserRegisterSchema = z.object({
     .regex(/^[0-9]{10}$/, "Phone number must be exactly 10 digits")
     .optional()
     .or(z.literal("")),
-  gstNumber: z.string().max(50).optional(),
-  website: z.string().url().max(500).optional(),
+  gstNumber: z.string().max(50).optional().or(z.literal("")),
+  website: z.string().url().max(500).optional().or(z.literal("")),
 });
 
 export const membershipSubscribeSchema = z.object({
@@ -253,7 +253,7 @@ export const adCreateSchema = z.object({
   zone: z.string(),
   type: z.enum(["image", "html", "script", "text"]).optional(),
   imageUrl: z.string().max(1000).optional(),
-  linkUrl: z.string().url().max(1000).optional(),
+  linkUrl: z.string().url().max(1000).optional().or(z.literal("")),
   htmlContent: z.string().optional(),
   altText: z.string().max(500).optional(),
   width: z.number().int().optional(),
@@ -314,7 +314,7 @@ export const epaperEditionsForDateQuerySchema = z.object({
 
 export const epaperRegionCreateSchema = z.object({
   articleId: z.number().int().positive().optional(),
-  externalUrl: z.string().url().max(1000).optional(),
+  externalUrl: z.string().url().max(1000).optional().or(z.literal("")),
   x: z.number().min(0).max(1),
   y: z.number().min(0).max(1),
   width: z.number().min(0).max(1),

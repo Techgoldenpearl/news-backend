@@ -2,11 +2,11 @@ import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import { db } from "../config/db.js";
 import {
-  reporters, reporterSubmissions, reporterNotifications, categories, articles,
+  reporters, reporterSubmissions, reporterNotifications, categories, articles, articleWebsites,
 } from "../../drizzle/schema.js";
-import { eq, and, desc, sql, count } from "drizzle-orm";
+import { eq, and, desc, asc, sql, count, ilike } from "drizzle-orm";
 import { requireAuth, requireEditor, requireReporterAuth, signReporterToken } from "../middleware/auth.js";
-import { parsePagination, cookieOptions } from "../utils/helpers.js";
+import { parsePagination, cookieOptions, sanitizeForLike } from "../utils/helpers.js";
 import { validateBody } from "../middleware/validate.js";
 import {
   reporterRegisterSchema,
@@ -43,6 +43,7 @@ router.post("/register", validateBody(reporterRegisterSchema), async (req: Reque
     await db.insert(reporters).values({
       name, nameHindi, email, passwordHash, phone, designation, beat, city, state, bio,
       employeeId, idCardExpiry, status: "pending",
+      siteId: (req as any).site?.id ?? null,
     });
 
     res.status(201).json({ success: true, employeeId });
@@ -62,6 +63,7 @@ router.post("/login", async (req: Request, res: Response) => {
     const valid = await bcrypt.compare(password, reporter.passwordHash);
     if (!valid) return res.status(401).json({ error: "Invalid credentials" });
 
+    if (reporter.status === "pending") return res.status(403).json({ error: "Your application is pending approval" });
     if (reporter.status === "rejected") return res.status(403).json({ error: "Registration rejected" });
     if (reporter.status === "suspended") return res.status(403).json({ error: "Account suspended" });
 
@@ -163,10 +165,11 @@ router.post("/submissions", requireReporterAuth, async (req: Request, res: Respo
     const reporter = (req as any).reporter;
     if (reporter.status !== "active") return res.status(403).json({ error: "Account not active" });
 
-    const { isDraft, ...data } = req.body;
+    const { isDraft, siteId: _ignoredSiteId, ...data } = req.body;
     await db.insert(reporterSubmissions).values({
       ...data,
       reporterId: reporter.id,
+      siteId: reporter.siteId,
       status: isDraft ? "draft" : "pending",
       submittedAt: isDraft ? null : new Date(),
     });
@@ -189,27 +192,43 @@ router.get("/submissions", requireReporterAuth, async (req: Request, res: Respon
     const reporter = (req as any).reporter;
     const { limit, offset } = parsePagination(req.query);
     const status = req.query.status as string | undefined;
+    const search = req.query.search as string | undefined;
+    const categoryId = req.query.categoryId as string | undefined;
+    const date = req.query.date as string | undefined;
+    const sort = (req.query.sort as string) || "newest";
 
     const conditions: any[] = [eq(reporterSubmissions.reporterId, reporter.id)];
     if (status && status !== "all") conditions.push(eq(reporterSubmissions.status, status as any));
+    if (categoryId) conditions.push(eq(reporterSubmissions.categoryId, parseInt(categoryId)));
+    if (search) conditions.push(ilike(reporterSubmissions.title, `%${sanitizeForLike(search)}%`));
+    if (date) conditions.push(sql`${reporterSubmissions.createdAt}::date = ${date}::date`);
+
+    const orderBy = sort === "oldest" ? asc(reporterSubmissions.createdAt) : desc(reporterSubmissions.createdAt);
 
     const [items, [total]] = await Promise.all([
       db.select({
         id: reporterSubmissions.id,
         title: reporterSubmissions.title,
+        titleHindi: reporterSubmissions.titleHindi,
         summary: reporterSubmissions.summary,
+        content: reporterSubmissions.content,
         thumbnailUrl: reporterSubmissions.thumbnailUrl,
         status: reporterSubmissions.status,
         adminNote: reporterSubmissions.adminNote,
         isUrgent: reporterSubmissions.isUrgent,
+        location: reporterSubmissions.location,
+        state: reporterSubmissions.state,
+        city: reporterSubmissions.city,
+        categoryId: reporterSubmissions.categoryId,
         submittedAt: reporterSubmissions.submittedAt,
         createdAt: reporterSubmissions.createdAt,
         categoryName: categories.name,
+        categoryNameHindi: categories.nameHindi,
       })
         .from(reporterSubmissions)
         .leftJoin(categories, eq(reporterSubmissions.categoryId, categories.id))
         .where(and(...conditions))
-        .orderBy(desc(reporterSubmissions.updatedAt))
+        .orderBy(orderBy)
         .limit(limit)
         .offset(offset),
       db.select({ c: count() }).from(reporterSubmissions).where(and(...conditions)),
@@ -221,14 +240,108 @@ router.get("/submissions", requireReporterAuth, async (req: Request, res: Respon
   }
 });
 
+// PUT /api/reporters/submissions/:id — reporter can only edit their own
+// submission. If it's already been approved and published, the linked
+// `articles` row is updated too so the live site reflects the edit rather
+// than silently drifting from the submission record; the article's status
+// stays "published" since the reporter is amending live content, not
+// resubmitting it for a fresh review pass. A rejected submission is a
+// closed record with no article, so it stays edit-only.
+router.put("/submissions/:id", requireReporterAuth, async (req: Request, res: Response) => {
+  try {
+    const reporter = (req as any).reporter;
+    const id = parseInt(req.params.id);
+    const [sub] = await db.select().from(reporterSubmissions).where(eq(reporterSubmissions.id, id)).limit(1);
+    if (!sub) return res.status(404).json({ error: "Submission not found" });
+    if (sub.reporterId !== reporter.id) return res.status(403).json({ error: "Not your submission" });
+    if (sub.status === "rejected") {
+      return res.status(400).json({ error: "This submission can no longer be edited" });
+    }
+
+    const { isDraft, ...data } = req.body;
+    const isPublished = sub.status === "approved";
+    // A published submission stays published on edit — only draft/pending
+    // ones move between those two based on the isDraft toggle.
+    const status = isPublished ? sub.status : isDraft ? "draft" : "pending";
+
+    await db.update(reporterSubmissions).set({
+      ...data,
+      status,
+      submittedAt: !isDraft && sub.status === "draft" ? new Date() : sub.submittedAt,
+      updatedAt: new Date(),
+    }).where(eq(reporterSubmissions.id, id));
+
+    if (isPublished && sub.publishedArticleId) {
+      await db.update(articles).set({
+        title: data.title, titleHindi: data.titleHindi, summary: data.summary, content: data.content,
+        categoryId: data.categoryId, thumbnailUrl: data.thumbnailUrl, isBreaking: data.isUrgent,
+        location: data.location, state: data.state, city: data.city,
+      }).where(eq(articles.id, sub.publishedArticleId));
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update submission" });
+  }
+});
+
+// DELETE /api/reporters/submissions/:id — reporter can only delete their
+// own submission. If it's already published, the linked article is
+// unpublished (moved to draft, not hard-deleted) rather than removed from
+// the DB outright, so the same reversible-by-an-editor guarantee that
+// covers every other article status also covers this path — a reporter's
+// self-service delete shouldn't be the one action that erases a record
+// no admin can recover.
+router.delete("/submissions/:id", requireReporterAuth, async (req: Request, res: Response) => {
+  try {
+    const reporter = (req as any).reporter;
+    const id = parseInt(req.params.id);
+    const [sub] = await db.select().from(reporterSubmissions).where(eq(reporterSubmissions.id, id)).limit(1);
+    if (!sub) return res.status(404).json({ error: "Submission not found" });
+    if (sub.reporterId !== reporter.id) return res.status(403).json({ error: "Not your submission" });
+    if (sub.status === "rejected") {
+      return res.status(400).json({ error: "This submission can no longer be deleted" });
+    }
+
+    if (sub.status === "approved" && sub.publishedArticleId) {
+      await db.update(articles).set({ status: "draft", publishedAt: null }).where(eq(articles.id, sub.publishedArticleId));
+    }
+
+    await db.delete(reporterSubmissions).where(eq(reporterSubmissions.id, id));
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete submission" });
+  }
+});
+
 // GET /api/reporters/stats
-router.get("/stats", requireReporterAuth, (req: Request, res: Response) => {
-  const reporter = (req as any).reporter;
-  res.json({
-    total: reporter.submissionsCount,
-    approved: reporter.approvedCount,
-    totalViews: reporter.totalViewsCount,
-  });
+router.get("/stats", requireReporterAuth, async (req: Request, res: Response) => {
+  try {
+    const reporter = (req as any).reporter;
+
+    const rows = await db.select({ status: reporterSubmissions.status, c: count() })
+      .from(reporterSubmissions)
+      .where(eq(reporterSubmissions.reporterId, reporter.id))
+      .groupBy(reporterSubmissions.status);
+
+    const byStatus: Record<string, number> = {};
+    for (const r of rows) byStatus[r.status] = Number(r.c);
+
+    res.json({
+      total: reporter.submissionsCount,
+      approved: reporter.approvedCount,
+      totalViews: reporter.totalViewsCount,
+      draft: byStatus.draft ?? 0,
+      // "pending review" covers both pending and under_review — the reporter
+      // sees one bucket; the admin side is where the finer distinction matters.
+      pendingReview: (byStatus.pending ?? 0) + (byStatus.under_review ?? 0),
+      // A submission's `articles` row is created only on approval (see
+      // /admin/submissions/:id/approve), so "approved" here means published.
+      published: byStatus.approved ?? 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch stats" });
+  }
 });
 
 // GET /api/reporters/notifications
@@ -355,6 +468,25 @@ router.patch("/admin/:id/suspend", requireAuth, requireEditor, async (req: Reque
   }
 });
 
+// PATCH /api/reporters/admin/:id/reactivate — restores a suspended reporter to active
+// without re-running the approval flow (idCardExpiry/approvedAt already set from the
+// original approval), so their existing ID card stays valid.
+router.patch("/admin/:id/reactivate", requireAuth, requireEditor, async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    await db.update(reporters).set({ status: "active", adminNote: req.body.note ?? null })
+      .where(eq(reporters.id, id));
+
+    await db.insert(reporterNotifications).values({
+      reporterId: id, type: "account_approved", title: "Account Reactivated", message: "Your reporter account has been reactivated.",
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to reactivate reporter" });
+  }
+});
+
 // GET /api/reporters/admin/submissions
 router.get("/admin/submissions", requireAuth, requireEditor, async (req: Request, res: Response) => {
   try {
@@ -418,6 +550,10 @@ router.patch("/admin/submissions/:id/approve", requireAuth, requireEditor, async
       city: sub.city,
       publishedAt: new Date(),
     }).returning({ id: articles.id });
+
+    if (sub.siteId) {
+      await db.insert(articleWebsites).values({ articleId: newArticle.id, siteId: sub.siteId });
+    }
 
     await db.update(reporterSubmissions).set({
       status: "approved", reviewedBy: admin.id, reviewedAt: new Date(), adminNote: req.body.note,

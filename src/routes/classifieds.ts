@@ -14,12 +14,14 @@ router.get("/", async (req: Request, res: Response) => {
   try {
     const { limit, offset } = parsePagination(req.query);
     const { category, city, search, featured } = req.query as any;
+    const siteId = req.query.siteId ? parseInt(req.query.siteId as string) : (req as any).site?.id;
 
     const conditions: any[] = [
       eq(classifiedAds.status, "approved"),
       or(gte(classifiedAds.expiresAt, new Date()), sql`${classifiedAds.expiresAt} IS NULL`),
     ];
 
+    if (siteId) conditions.push(eq(classifiedAds.siteId, siteId));
     if (category) conditions.push(eq(classifiedAds.category, category));
     if (city) conditions.push(eq(classifiedAds.city, city));
     if (featured === "true") conditions.push(eq(classifiedAds.isFeatured, true));
@@ -173,9 +175,10 @@ router.patch("/admin/:id/reject", requireAuth, requireEditor, async (req: Reques
 router.put("/admin/:id", requireAuth, requireEditor, async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
-    const { title, titleHindi, description, descriptionHindi, images, price, contactName, contactPhone, city, area, state, category, isFeatured, isUrgent, isHomepage, expiresAt, status } = req.body;
+    const { title, titleHindi, description, descriptionHindi, images, price, contactName, contactPhone, city, area, state, category, isFeatured, isUrgent, isHomepage, expiresAt, status, siteId } = req.body;
 
     const updates: any = { updatedAt: new Date() };
+    if (siteId !== undefined) updates.siteId = siteId;
     if (title !== undefined) updates.title = title;
     if (titleHindi !== undefined) updates.titleHindi = titleHindi;
     if (description !== undefined) updates.description = description;

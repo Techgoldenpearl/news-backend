@@ -5,7 +5,7 @@ import {
   rashifal, webStories, photoGalleries, galleryImages,
   liveBlogs, liveBlogEntries, topics, topicFollows, articleTopics,
   states, cities, authors, articleReactions, readingHistory,
-  utilityData, bookmarks, comments, articles, categories, tags,
+  utilityData, bookmarks, comments, articles, categories, tags, articleTags,
   notificationPreferences, pushSubscriptions, users,
 } from "../../drizzle/schema.js";
 import { eq, and, or, desc, asc, sql, inArray, ilike, count } from "drizzle-orm";
@@ -194,9 +194,85 @@ router.post("/photo-galleries", requireAuth, requireEditor, async (req: Request,
   }
 });
 
+router.put("/photo-galleries/:id", requireAuth, requireEditor, async (req: Request, res: Response) => {
+  try {
+    const galleryId = parseInt(req.params.id);
+    const { images, ...galleryData } = req.body;
+    const extra: any = {};
+    if (galleryData.status === "published") extra.publishedAt = new Date();
+    await db.update(photoGalleries).set({ ...galleryData, ...extra, updatedAt: new Date() })
+      .where(eq(photoGalleries.id, galleryId));
+
+    if (images) {
+      await db.delete(galleryImages).where(eq(galleryImages.galleryId, galleryId));
+      if (images.length) {
+        await db.insert(galleryImages).values(images.map((img: any) => ({ ...img, galleryId })));
+      }
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update gallery" });
+  }
+});
+
+router.delete("/photo-galleries/:id", requireAuth, requireEditor, async (req: Request, res: Response) => {
+  try {
+    const galleryId = parseInt(req.params.id);
+    await db.delete(galleryImages).where(eq(galleryImages.galleryId, galleryId));
+    await db.delete(photoGalleries).where(eq(photoGalleries.id, galleryId));
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete gallery" });
+  }
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // LIVE BLOGS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Currently-live blogs for the home page's live-updates feed: each breaking
+// article that has an active live blog, with its 2 most recent entries
+// pre-joined so the client doesn't need one request per card.
+router.get("/live-blogs", async (req: Request, res: Response) => {
+  try {
+    const siteId = req.query.siteId ? parseInt(req.query.siteId as string) : (req as any).site?.id;
+    const limit = Math.min(parseInt((req.query.limit as string) || "6"), 20);
+
+    const conditions: any[] = [eq(liveBlogs.isLive, true), eq(articles.status, "published")];
+    if (siteId) conditions.push(articleMatchesSite(siteId));
+
+    const rows = await db.select({
+      liveBlogId: liveBlogs.id,
+      articleId: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
+      summary: articles.summary, thumbnailUrl: articles.thumbnailUrl,
+      publishedAt: articles.publishedAt, isBreaking: articles.isBreaking, contentType: articles.contentType,
+      categoryName: categories.name, categoryNameHindi: categories.nameHindi,
+    })
+      .from(liveBlogs)
+      .innerJoin(articles, and(eq(articles.id, liveBlogs.articleId), ...conditions))
+      .leftJoin(categories, eq(articles.categoryId, categories.id))
+      .orderBy(desc(liveBlogs.updatedAt))
+      .limit(limit);
+
+    if (rows.length === 0) return res.json([]);
+
+    const blogIds = rows.map((r) => r.liveBlogId);
+    const allEntries = await db.select().from(liveBlogEntries)
+      .where(inArray(liveBlogEntries.liveBlogId, blogIds))
+      .orderBy(desc(liveBlogEntries.postedAt));
+
+    const entriesByBlog = new Map<number, typeof allEntries>();
+    for (const e of allEntries) {
+      const list = entriesByBlog.get(e.liveBlogId) ?? [];
+      if (list.length < 2) list.push(e);
+      entriesByBlog.set(e.liveBlogId, list);
+    }
+
+    res.json(rows.map((r) => ({ ...r, entries: entriesByBlog.get(r.liveBlogId) ?? [] })));
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch live blogs" });
+  }
+});
 
 router.get("/live-blogs/:articleId", async (req: Request, res: Response) => {
   try {
@@ -343,7 +419,7 @@ router.get("/locations/states/:slug/articles", async (req: Request, res: Respons
       categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(articles).leftJoin(categories, eq(articles.categoryId, categories.id))
-      .where(and(eq(articles.status, "published"), eq(articles.state, state.name)))
+      .where(and(eq(articles.status, "published"), ilike(articles.state, state.name)))
       .orderBy(desc(articles.publishedAt)).limit(limit).offset(offset);
 
     res.json({ state, articles: items });
@@ -369,7 +445,7 @@ router.get("/locations/states/:slug/cities/:citySlug/articles", async (req: Requ
       categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(articles).leftJoin(categories, eq(articles.categoryId, categories.id))
-      .where(and(eq(articles.status, "published"), eq(articles.state, state.name), eq(articles.city, city.name)))
+      .where(and(eq(articles.status, "published"), ilike(articles.state, state.name), ilike(articles.city, city.name)))
       .orderBy(desc(articles.publishedAt)).limit(limit).offset(offset);
 
     res.json({ state, city, articles: items });
@@ -694,8 +770,65 @@ router.get("/utility-data", async (req: Request, res: Response) => {
   }
 });
 
-// Tags
-router.get("/tags", async (_req: Request, res: Response) => {
+// Tags — ranked by trending signal (recent published articles' view counts),
+// scoped to the current site, so "Trending" widgets show real activity
+// instead of an alphabetical tag directory.
+router.get("/tags", async (req: Request, res: Response) => {
+  try {
+    const siteId = req.query.siteId ? parseInt(req.query.siteId as string) : (req as any).site?.id;
+    const TRENDING_WINDOW_DAYS = 7;
+    const windowStart = new Date(Date.now() - TRENDING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+    const conditions: any[] = [eq(articles.status, "published"), sql`${articles.publishedAt} >= ${windowStart}`];
+    if (siteId) conditions.push(articleMatchesSite(siteId));
+
+    const trending = await db.select({
+      id: tags.id, name: tags.name, slug: tags.slug,
+      score: sql<number>`coalesce(sum(${articles.viewsCount}), 0)`.as("score"),
+    })
+      .from(tags)
+      .innerJoin(articleTags, eq(articleTags.tagId, tags.id))
+      .innerJoin(articles, and(eq(articles.id, articleTags.articleId), ...conditions))
+      .groupBy(tags.id)
+      .orderBy(desc(sql`score`))
+      .limit(10);
+
+    if (trending.length >= 8) return res.json(trending);
+
+    // Not enough recent trending activity (low-traffic site/window) — fall back
+    // to tags from the most recently published articles, still not alphabetical.
+    const seen = new Set(trending.map((t) => t.id));
+    const fallbackConditions: any[] = [eq(articles.status, "published")];
+    if (siteId) fallbackConditions.push(articleMatchesSite(siteId));
+
+    const recent = await db.selectDistinct({
+      id: tags.id, name: tags.name, slug: tags.slug,
+      publishedAt: articles.publishedAt,
+    })
+      .from(tags)
+      .innerJoin(articleTags, eq(articleTags.tagId, tags.id))
+      .innerJoin(articles, and(eq(articles.id, articleTags.articleId), ...fallbackConditions))
+      .orderBy(desc(articles.publishedAt))
+      .limit(30);
+
+    for (const t of recent) {
+      if (trending.length >= 10) break;
+      if (seen.has(t.id)) continue;
+      seen.add(t.id);
+      trending.push({ id: t.id, name: t.name, slug: t.slug, score: 0 });
+    }
+
+    res.json(trending);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch tags" });
+  }
+});
+
+// Full, alphabetical tag list for editor UIs (the admin's tag picker needs
+// every tag, not the top-ranked trending subset GET /tags returns) — that's
+// a distinct use case, so it's a separate route rather than a "give me
+// everything" flag on the trending one.
+router.get("/tags/all", requireAuth, requireEditor, async (_req: Request, res: Response) => {
   try {
     const items = await db.select().from(tags).orderBy(tags.name);
     res.json(items);
@@ -708,7 +841,8 @@ router.post("/tags", requireAuth, requireEditor, async (req: Request, res: Respo
   try {
     const [tag] = await db.insert(tags).values(req.body).returning();
     res.status(201).json(tag);
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.cause?.code === "23505") return res.status(409).json({ error: "A tag with this name already exists" });
     res.status(500).json({ error: "Failed to create tag" });
   }
 });

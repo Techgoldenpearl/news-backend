@@ -14,12 +14,14 @@ router.get("/", async (req: Request, res: Response) => {
   try {
     const { limit, offset } = parsePagination(req.query);
     const { type, city, search } = req.query as any;
+    const siteId = req.query.siteId ? parseInt(req.query.siteId as string) : (req as any).site?.id;
 
     const conditions: any[] = [
       eq(shokSandesh.status, "approved"),
       or(gte(shokSandesh.expiresAt, new Date()), sql`${shokSandesh.expiresAt} IS NULL`),
     ];
 
+    if (siteId) conditions.push(eq(shokSandesh.siteId, siteId));
     if (type) conditions.push(eq(shokSandesh.type, type));
     if (city) conditions.push(eq(shokSandesh.city, city));
     if (search) conditions.push(or(

@@ -51,6 +51,39 @@ router.get("/zone/:zone", async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/ads/zone/:zone/list — multiple active ads for a zone, for
+// rotating/slider ad placements (vs. the single-ad endpoint above, used
+// for static slots). Same eligibility filtering, capped at 10.
+router.get("/zone/:zone/list", async (req: Request, res: Response) => {
+  try {
+    const { zone } = req.params;
+    if (!VALID_ZONES.has(zone)) return res.json({ items: [] });
+    const device = (req.query.device as string) || "desktop";
+    const now = new Date();
+
+    const siteId = (req as any).site?.id;
+    const conditions: any[] = [
+      eq(ads.zone, zone as any),
+      eq(ads.status, "active"),
+      or(eq(ads.deviceTarget, "all"), eq(ads.deviceTarget, device as any)),
+      or(isNull(ads.startDate), lte(ads.startDate, now)),
+      or(isNull(ads.endDate), gte(ads.endDate, now)),
+      or(isNull(ads.impressionCap), sql`${ads.impressionCount} < ${ads.impressionCap}`),
+      or(isNull(ads.clickCap), sql`${ads.clickCount} < ${ads.clickCap}`),
+    ];
+    if (siteId) conditions.push(or(eq(ads.siteId, siteId), isNull(ads.siteId)));
+
+    const items = await db.select().from(ads)
+      .where(and(...conditions))
+      .orderBy(desc(ads.priority), desc(ads.createdAt))
+      .limit(10);
+
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch ads" });
+  }
+});
+
 // POST /api/ads/impression
 router.post("/impression", async (req: Request, res: Response) => {
   try {

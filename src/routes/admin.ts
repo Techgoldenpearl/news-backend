@@ -228,6 +228,52 @@ router.patch("/comments/:id/moderate", requireAuth, requireEditor, async (req: R
   }
 });
 
+// GET /api/admin/comments — full moderation history (all statuses), paginated.
+// Separate from /comments/pending, which is the small always-fetched queue used
+// for the day-to-day approve/reject workflow.
+router.get("/comments", requireAuth, requireEditor, async (req: Request, res: Response) => {
+  try {
+    const { limit, offset } = parsePagination(req.query);
+    const status = req.query.status as string | undefined;
+    const conditions = status && ["pending", "approved", "rejected"].includes(status)
+      ? [eq(comments.status, status as "pending" | "approved" | "rejected")]
+      : [];
+
+    const [items, [total]] = await Promise.all([
+      db.select({
+        id: comments.id,
+        content: comments.content,
+        status: comments.status,
+        createdAt: comments.createdAt,
+        userName: users.name,
+        articleTitle: articles.title,
+        articleSlug: articles.slug,
+      })
+        .from(comments)
+        .leftJoin(users, eq(comments.userId, users.id))
+        .leftJoin(articles, eq(comments.articleId, articles.id))
+        .where(conditions.length ? and(...conditions) : undefined)
+        .orderBy(desc(comments.createdAt))
+        .limit(limit).offset(offset),
+      db.select({ c: count() }).from(comments).where(conditions.length ? and(...conditions) : undefined),
+    ]);
+    res.json({ items, total: Number(total?.c ?? 0) });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch comments" });
+  }
+});
+
+router.delete("/comments/:id", requireAuth, requireEditor, async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid comment ID" });
+    await db.delete(comments).where(eq(comments.id, id));
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete comment" });
+  }
+});
+
 // ─── AUDIT LOGS ─────────────────────────────────────────────────────────────
 
 router.get("/audit-logs", requireAuth, requireSuperAdmin, async (req: Request, res: Response) => {
