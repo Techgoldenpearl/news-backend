@@ -22,7 +22,7 @@ test.describe("Membership Management", () => {
     // Ensure at least one subscription exists so the table has a row to check
     const email = `pw-admin-sub-check-${Date.now()}@example.com`;
     const registerRes = await request.post("http://localhost:5000/api/auth/register", {
-      data: { email, password: "testpass123" },
+      data: { email, password: "Testpass123" },
     });
     const { token: userToken } = await registerRes.json();
     const plans = await (await request.get("http://localhost:5000/api/membership/plans")).json();
@@ -39,7 +39,7 @@ test.describe("Membership Management", () => {
   test("admin can deactivate and reactivate a user's subscription from the table", async ({ page, request }) => {
     const email = `pw-admin-sub-toggle-${Date.now()}@example.com`;
     const registerRes = await request.post("http://localhost:5000/api/auth/register", {
-      data: { email, password: "testpass123" },
+      data: { email, password: "Testpass123" },
     });
     const { token: userToken } = await registerRes.json();
     const plans = await (await request.get("http://localhost:5000/api/membership/plans")).json();

@@ -15,7 +15,7 @@ test.beforeAll(async ({ request }) => {
 
   const email = `membership-test-${Date.now()}@example.com`;
   const registerRes = await request.post(`${API}/auth/register`, {
-    data: { email, password: "testpass123" },
+    data: { email, password: "Testpass123" },
   });
   userToken = (await registerRes.json()).token;
 
@@ -321,7 +321,7 @@ test.describe("Membership API — admin subscription activate/deactivate", () =>
   test.beforeAll(async ({ request }) => {
     const email = `membership-sub-toggle-${Date.now()}@example.com`;
     const registerRes = await request.post(`${API}/auth/register`, {
-      data: { email, password: "testpass123" },
+      data: { email, password: "Testpass123" },
     });
     subUserToken = (await registerRes.json()).token;
 

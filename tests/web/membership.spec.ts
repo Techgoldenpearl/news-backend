@@ -27,7 +27,7 @@ test.describe("Public Membership — my subscription", () => {
   test("subscribing shows the status card with cancel option", async ({ page, request }) => {
     const email = `pw-membership-sub-${Date.now()}@example.com`;
     const registerRes = await request.post(`${API}/auth/register`, {
-      data: { email, password: "testpass123" },
+      data: { email, password: "Testpass123" },
     });
     const { token } = await registerRes.json();
 
