@@ -412,6 +412,10 @@ router.get("/locations/states/:slug/articles", async (req: Request, res: Respons
     if (!state) return res.status(404).json({ error: "State not found" });
 
     const { limit, offset } = parsePagination(req.query);
+    const siteId = req.query.siteId ? parseInt(req.query.siteId as string) : (req as any).site?.id;
+    const conditions = [eq(articles.status, "published"), ilike(articles.state, state.name)];
+    if (siteId) conditions.push(articleMatchesSite(siteId));
+
     const items = await db.select({
       id: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
       summary: articles.summary, thumbnailUrl: articles.thumbnailUrl,
@@ -419,7 +423,7 @@ router.get("/locations/states/:slug/articles", async (req: Request, res: Respons
       categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(articles).leftJoin(categories, eq(articles.categoryId, categories.id))
-      .where(and(eq(articles.status, "published"), ilike(articles.state, state.name)))
+      .where(and(...conditions))
       .orderBy(desc(articles.publishedAt)).limit(limit).offset(offset);
 
     res.json({ state, articles: items });
@@ -438,6 +442,10 @@ router.get("/locations/states/:slug/cities/:citySlug/articles", async (req: Requ
     if (!city) return res.status(404).json({ error: "City not found" });
 
     const { limit, offset } = parsePagination(req.query);
+    const siteId = req.query.siteId ? parseInt(req.query.siteId as string) : (req as any).site?.id;
+    const conditions = [eq(articles.status, "published"), ilike(articles.state, state.name), ilike(articles.city, city.name)];
+    if (siteId) conditions.push(articleMatchesSite(siteId));
+
     const items = await db.select({
       id: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
       summary: articles.summary, thumbnailUrl: articles.thumbnailUrl,
@@ -445,7 +453,7 @@ router.get("/locations/states/:slug/cities/:citySlug/articles", async (req: Requ
       categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(articles).leftJoin(categories, eq(articles.categoryId, categories.id))
-      .where(and(eq(articles.status, "published"), ilike(articles.state, state.name), ilike(articles.city, city.name)))
+      .where(and(...conditions))
       .orderBy(desc(articles.publishedAt)).limit(limit).offset(offset);
 
     res.json({ state, city, articles: items });
@@ -561,13 +569,17 @@ router.get("/authors/:slug", async (req: Request, res: Response) => {
     if (!author) return res.status(404).json({ error: "Author not found" });
 
     const { limit, offset } = parsePagination(req.query);
+    const siteId = req.query.siteId ? parseInt(req.query.siteId as string) : (req as any).site?.id;
+    const conditions = [eq(articles.authorId, author.id), eq(articles.status, "published")];
+    if (siteId) conditions.push(articleMatchesSite(siteId));
+
     const authorArticles = await db.select({
       id: articles.id, title: articles.title, titleHindi: articles.titleHindi, slug: articles.slug,
       summary: articles.summary, thumbnailUrl: articles.thumbnailUrl,
       publishedAt: articles.publishedAt, categoryName: categories.name, categoryNameHindi: categories.nameHindi,
     })
       .from(articles).leftJoin(categories, eq(articles.categoryId, categories.id))
-      .where(and(eq(articles.authorId, author.id), eq(articles.status, "published")))
+      .where(and(...conditions))
       .orderBy(desc(articles.publishedAt)).limit(limit).offset(offset);
 
     res.json({ author, articles: authorArticles });

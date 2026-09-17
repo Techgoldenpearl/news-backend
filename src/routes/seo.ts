@@ -1,8 +1,9 @@
 import { Router, Request, Response } from "express";
 import { db } from "../config/db.js";
 import { articles, categories, sites } from "../../drizzle/schema.js";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { cacheGet, cacheSet, TTL } from "../config/redis.js";
+import { articleMatchesSite } from "../utils/helpers.js";
 
 const router = Router();
 
@@ -19,10 +20,13 @@ router.get("/sitemap.xml", async (req: Request, res: Response) => {
       return res.header("Content-Type", "application/xml").send(cached);
     }
 
+    const articleConditions: any[] = [eq(articles.status, "published")];
+    if (site) articleConditions.push(articleMatchesSite(site.id));
+
     const allArticles = await db
       .select({ slug: articles.slug, publishedAt: articles.publishedAt, updatedAt: articles.updatedAt })
       .from(articles)
-      .where(eq(articles.status, "published"))
+      .where(and(...articleConditions))
       .orderBy(desc(articles.publishedAt))
       .limit(5000);
 

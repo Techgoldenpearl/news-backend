@@ -76,6 +76,9 @@ router.get("/rss/category/:slug", async (req: Request, res: Response) => {
     const site = (req as any).site;
     const baseUrl = site?.domain ? `https://${site.domain}` : `http://${req.hostname}`;
 
+    const conditions: any[] = [eq(articles.status, "published"), eq(articles.categoryId, cat.id)];
+    if (site) conditions.push(articleMatchesSite(site.id));
+
     const items = await db
       .select({
         title: articles.title,
@@ -85,7 +88,7 @@ router.get("/rss/category/:slug", async (req: Request, res: Response) => {
         publishedAt: articles.publishedAt,
       })
       .from(articles)
-      .where(and(eq(articles.status, "published"), eq(articles.categoryId, cat.id)))
+      .where(and(...conditions))
       .orderBy(desc(articles.publishedAt))
       .limit(30);
 
