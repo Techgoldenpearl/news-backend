@@ -4,6 +4,12 @@ import { classifiedAds, classifiedPackages, classifiedReports } from "../../driz
 import { eq, desc, and, or, like, count, lte, gte, sql } from "drizzle-orm";
 import { requireAuth, requireEditor, requireAdmin } from "../middleware/auth.js";
 import { parsePagination, sanitizeForLike } from "../utils/helpers.js";
+import { uploadToS3 } from "../config/storage.js";
+import { optimizeImage } from "../utils/imageOptimizer.js";
+import { mediaUploadSchema } from "../validations/index.js";
+import { validateBody } from "../middleware/validate.js";
+
+const MAX_PHOTO_BASE64_SIZE = 11_000_000;
 
 const router = Router();
 
@@ -59,6 +65,35 @@ router.post("/report", async (req: Request, res: Response) => {
 });
 
 // ─── ADVERTISER ENDPOINTS (authenticated users) ────────────────────────────
+
+// POST /api/classifieds/upload-photo — upload a photo for an ad (any logged-in user)
+router.post("/upload-photo", requireAuth, validateBody(mediaUploadSchema), async (req: Request, res: Response) => {
+  try {
+    const { base64, fileName, mimeType } = req.body;
+    if (base64.length > MAX_PHOTO_BASE64_SIZE) {
+      return res.status(400).json({ error: "File too large (max 8MB)" });
+    }
+
+    const rawBuffer = Buffer.from(base64, "base64");
+    let optimized;
+    try {
+      optimized = await optimizeImage(rawBuffer, mimeType);
+    } catch {
+      optimized = null;
+    }
+
+    const buffer = optimized?.original ?? rawBuffer;
+    const mime = optimized?.originalMime ?? mimeType;
+    const ext = optimized ? "webp" : (mimeType === "image/png" ? "png" : mimeType === "image/gif" ? "gif" : "jpg");
+    const key = `classifieds/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const { url } = await uploadToS3(key, buffer, mime);
+
+    res.status(201).json({ url, fileName });
+  } catch (err) {
+    console.error("[Classifieds] Photo upload error:", err);
+    res.status(500).json({ error: "Upload failed" });
+  }
+});
 
 // POST /api/classifieds/submit — submit a new ad
 router.post("/submit", requireAuth, async (req: Request, res: Response) => {
