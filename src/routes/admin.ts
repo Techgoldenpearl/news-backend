@@ -5,7 +5,7 @@ import {
   ads, advertiserAdRequests, auditLogs, comments,
   pageLayouts, userSubscriptions, membershipPlans,
 } from "../../drizzle/schema.js";
-import { eq, desc, and, like, or, count, sql, gte } from "drizzle-orm";
+import { eq, desc, and, like, or, count, sql, gte, ne } from "drizzle-orm";
 import { requireAuth, requireAdmin, requireSuperAdmin, requireEditor } from "../middleware/auth.js";
 import bcrypt from "bcryptjs";
 import { parsePagination, sanitizeForLike } from "../utils/helpers.js";
@@ -158,6 +158,13 @@ router.put("/users/:id", requireAuth, requireSuperAdmin, async (req: Request, re
     if (isNaN(id)) return res.status(400).json({ error: "Invalid user ID" });
 
     const { name, email, phone, role, password } = req.body;
+
+    if (email !== undefined) {
+      const [existing] = await db.select({ id: users.id }).from(users)
+        .where(and(eq(users.email, email), ne(users.id, id))).limit(1);
+      if (existing) return res.status(400).json({ error: "Email already exists" });
+    }
+
     const updates: any = { updatedAt: new Date() };
     if (name !== undefined) updates.name = name;
     if (email !== undefined) updates.email = email;

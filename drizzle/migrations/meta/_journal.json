@@ -64,6 +64,13 @@
       "when": 1789205611883,
       "tag": "0008_awesome_zombie",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789811887585,
+      "tag": "0009_chilly_magneto",
+      "breakpoints": true
     }
   ]
 }

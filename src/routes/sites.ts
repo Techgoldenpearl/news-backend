@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { db } from "../config/db.js";
 import { sites, siteSettings } from "../../drizzle/schema.js";
-import { eq } from "drizzle-orm";
+import { eq, and, ne, or } from "drizzle-orm";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { clearSiteCache } from "../middleware/siteResolver.js";
 
@@ -55,7 +55,16 @@ router.get("/:id", async (req: Request, res: Response) => {
 // POST /api/sites — create site (admin)
 router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { name, slug, domain, subdomain, logoUrl, faviconUrl, description, language, region, theme, socialLinks, seoDefaults } = req.body;
+    const { name, slug, subdomain, logoUrl, faviconUrl, description, language, region, theme, socialLinks, seoDefaults } = req.body;
+    const domain = req.body.domain || null;
+
+    const dupeConditions = [eq(sites.slug, slug)];
+    if (domain) dupeConditions.push(eq(sites.domain, domain));
+    const [existing] = await db.select({ id: sites.id, slug: sites.slug, domain: sites.domain }).from(sites).where(or(...dupeConditions)).limit(1);
+    if (existing) {
+      const field = existing.slug === slug ? "slug" : "domain";
+      return res.status(409).json({ error: `A site with this ${field} already exists` });
+    }
 
     const [newSite] = await db
       .insert(sites)
@@ -64,7 +73,8 @@ router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) 
 
     clearSiteCache();
     res.status(201).json(newSite);
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.cause?.code === "23505") return res.status(409).json({ error: "A site with this slug or domain already exists" });
     console.error("[Sites] Create error:", err);
     res.status(500).json({ error: "Failed to create site" });
   }
@@ -74,7 +84,23 @@ router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) 
 router.put("/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
-    const { name, slug, domain, subdomain, logoUrl, faviconUrl, description, language, region, theme, socialLinks, seoDefaults, isActive } = req.body;
+    const { name, slug, subdomain, logoUrl, faviconUrl, description, language, region, theme, socialLinks, seoDefaults, isActive } = req.body;
+    const domain = req.body.domain !== undefined ? (req.body.domain || null) : undefined;
+
+    if (slug || domain) {
+      const dupeConditions = [];
+      if (slug) dupeConditions.push(eq(sites.slug, slug));
+      if (domain) dupeConditions.push(eq(sites.domain, domain));
+      const [existing] = await db
+        .select({ id: sites.id, slug: sites.slug, domain: sites.domain })
+        .from(sites)
+        .where(and(or(...dupeConditions), ne(sites.id, id)))
+        .limit(1);
+      if (existing) {
+        const field = slug && existing.slug === slug ? "slug" : "domain";
+        return res.status(409).json({ error: `A site with this ${field} already exists` });
+      }
+    }
 
     await db
       .update(sites)
@@ -98,7 +124,8 @@ router.put("/:id", requireAuth, requireAdmin, async (req: Request, res: Response
 
     clearSiteCache();
     res.json({ success: true });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.cause?.code === "23505") return res.status(409).json({ error: "A site with this slug or domain already exists" });
     res.status(500).json({ error: "Failed to update site" });
   }
 });

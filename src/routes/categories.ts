@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { db } from "../config/db.js";
 import { categories, websiteCategories } from "../../drizzle/schema.js";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, isNull, ne } from "drizzle-orm";
 import { requireAuth, requireEditor, requireAdmin } from "../middleware/auth.js";
 import { validateBody } from "../middleware/validate.js";
 import { websiteCategoryUpsertSchema } from "../validations/index.js";
@@ -92,12 +92,19 @@ router.get("/:slug", async (req: Request, res: Response) => {
 // POST /api/categories
 router.post("/", requireAuth, requireEditor, async (req: Request, res: Response) => {
   try {
+    const { slug, siteId } = req.body;
+    const dupeConditions = [eq(categories.slug, slug)];
+    dupeConditions.push(siteId ? eq(categories.siteId, siteId) : isNull(categories.siteId));
+    const [existing] = await db.select({ id: categories.id }).from(categories).where(and(...dupeConditions)).limit(1);
+    if (existing) return res.status(409).json({ error: "A category with this slug already exists for this site" });
+
     const [newCat] = await db
       .insert(categories)
       .values({ ...req.body, isActive: true })
       .returning();
     res.status(201).json(newCat);
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.cause?.code === "23505") return res.status(409).json({ error: "A category with this slug already exists for this site" });
     res.status(500).json({ error: "Failed to create category" });
   }
 });
@@ -106,9 +113,19 @@ router.post("/", requireAuth, requireEditor, async (req: Request, res: Response)
 router.put("/:id", requireAuth, requireEditor, async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
+    const { slug, siteId } = req.body;
+
+    if (slug !== undefined) {
+      const dupeConditions = [eq(categories.slug, slug), ne(categories.id, id)];
+      dupeConditions.push(siteId ? eq(categories.siteId, siteId) : isNull(categories.siteId));
+      const [existing] = await db.select({ id: categories.id }).from(categories).where(and(...dupeConditions)).limit(1);
+      if (existing) return res.status(409).json({ error: "A category with this slug already exists for this site" });
+    }
+
     await db.update(categories).set({ ...req.body, updatedAt: new Date() }).where(eq(categories.id, id));
     res.json({ success: true });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.cause?.code === "23505") return res.status(409).json({ error: "A category with this slug already exists for this site" });
     res.status(500).json({ error: "Failed to update category" });
   }
 });

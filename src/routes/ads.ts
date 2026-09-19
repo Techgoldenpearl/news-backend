@@ -5,7 +5,7 @@ import {
   advertisers, advertiserAdRequests, revenueConfig,
   adZoneEnum,
 } from "../../drizzle/schema.js";
-import { eq, and, desc, or, isNull, lte, gte, count, sql } from "drizzle-orm";
+import { eq, and, desc, or, isNull, lte, gte, count, sql, ne } from "drizzle-orm";
 import {
   requireAuth, requireAdmin, optionalAuth,
   requireAdvertiserAuth, signAdvertiserToken,
@@ -177,9 +177,17 @@ router.get("/admin/list", requireAuth, requireAdmin, async (req: Request, res: R
 router.post("/admin", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
+    const { name, zone, siteId } = req.body;
+
+    const dupeConditions = [eq(ads.name, name), eq(ads.zone, zone)];
+    dupeConditions.push(siteId ? eq(ads.siteId, siteId) : isNull(ads.siteId));
+    const [existing] = await db.select({ id: ads.id }).from(ads).where(and(...dupeConditions)).limit(1);
+    if (existing) return res.status(409).json({ error: "An ad with this name already exists in this zone for this site" });
+
     const [newAd] = await db.insert(ads).values({ ...req.body, createdBy: user.id }).returning();
     res.status(201).json(newAd);
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.cause?.code === "23505") return res.status(409).json({ error: "An ad with this name already exists in this zone for this site" });
     res.status(500).json({ error: "Failed to create ad" });
   }
 });
@@ -189,9 +197,25 @@ router.put("/admin/:id", requireAuth, requireAdmin, async (req: Request, res: Re
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) return res.status(400).json({ error: "Invalid ad id" });
+
+    const { name, zone, siteId } = req.body;
+    if (name !== undefined || zone !== undefined) {
+      const [current] = await db.select({ name: ads.name, zone: ads.zone, siteId: ads.siteId }).from(ads).where(eq(ads.id, id)).limit(1);
+      if (current) {
+        const finalName = name ?? current.name;
+        const finalZone = zone ?? current.zone;
+        const finalSiteId = siteId !== undefined ? siteId : current.siteId;
+        const dupeConditions = [eq(ads.name, finalName), eq(ads.zone, finalZone), ne(ads.id, id)];
+        dupeConditions.push(finalSiteId ? eq(ads.siteId, finalSiteId) : isNull(ads.siteId));
+        const [existing] = await db.select({ id: ads.id }).from(ads).where(and(...dupeConditions)).limit(1);
+        if (existing) return res.status(409).json({ error: "An ad with this name already exists in this zone for this site" });
+      }
+    }
+
     await db.update(ads).set({ ...req.body, updatedAt: new Date() }).where(eq(ads.id, id));
     res.json({ success: true });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.cause?.code === "23505") return res.status(409).json({ error: "An ad with this name already exists in this zone for this site" });
     res.status(500).json({ error: "Failed to update ad" });
   }
 });

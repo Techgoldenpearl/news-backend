@@ -227,7 +227,7 @@ export const sites = pgTable("sites", {
   id: serial("id").primaryKey(),
   name: varchar("name", { length: 200 }).notNull(),
   slug: varchar("slug", { length: 100 }).notNull().unique(),
-  domain: varchar("domain", { length: 300 }),
+  domain: varchar("domain", { length: 300 }).unique(),
   subdomain: varchar("subdomain", { length: 100 }),
   logoUrl: text("logo_url"),
   faviconUrl: text("favicon_url"),
@@ -423,7 +423,13 @@ export const categories = pgTable("categories", {
   showInNav: boolean("show_in_nav").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [
+  // Note: siteId is nullable for "Global" categories, and Postgres treats NULLs
+  // as distinct for uniqueness purposes, so this does not dedupe slugs across
+  // multiple Global categories — only within a given site. The app-level
+  // duplicate check in the categories route covers the Global (siteId IS NULL) case.
+  uniqueIndex("idx_categories_site_slug").on(table.siteId, table.slug),
+]);
 
 export type Category = typeof categories.$inferSelect;
 
@@ -1166,6 +1172,9 @@ export const ads = pgTable(
     index("idx_ads_zone").on(table.zone),
     index("idx_ads_status").on(table.status),
     index("idx_ads_zone_status").on(table.zone, table.status),
+    // Same NULL-siteId caveat as categories above: this dedupes ad names within
+    // a given site+zone but not across multiple site-less (global) ads.
+    uniqueIndex("idx_ads_site_zone_name").on(table.siteId, table.zone, table.name),
   ]
 );
 
